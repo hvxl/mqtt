@@ -534,11 +534,11 @@ oo::class create mqtt {
 	return
     }
 
-    method unsubscribe {pattern args} {
+    method unsubscribe {pattern prefix} {
 	my variable subscriptions coro
 	if {[dict exists $subscriptions $pattern]} {
 	    dict update subscriptions $pattern pat {
-		set pat [lsearch -all -inline -exact -not $pat $args]
+		set pat [lsearch -all -inline -exact -not $pat $prefix]
 		if {[llength $pat] == 0} {
 		    unset pat
 		    set msg [dict create topics [dict create $pattern 2]]
