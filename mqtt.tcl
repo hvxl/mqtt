@@ -176,8 +176,15 @@ oo::class create mqtt {
 	    after cancel $timer($name)
 	    unset timer($name)
 	}
-	if {$time ne "cancel"} {
-	    return [set timer($name) [after $time $cmd]]
+	if {$time eq "expire"} {
+	    if {[catch {uplevel #0 $cmd} result]} {
+		log $result
+	    }
+	} elseif {$time ne "cancel"} {
+	    # Route timer expiry back through this method to clean up the array
+	    set timer($name) \
+	      [after $time [list [namespace which my] timer $name expire $cmd]]
+	    return $name
 	}
     }
 
@@ -234,23 +241,28 @@ oo::class create mqtt {
 			set queue ""
 			my listen
 		    }
-		    if {$fd ne ""} {
-			catch {close $fd}
-			set fd ""
-		    }
+		    set sleep 0
 		} else {
-		    my sleep 10000
+		    set sleep 10000
 		}
+	    } trap {MQTT CONNECTION REFUSED} {result opts} {
+		log "Connection refused, $result"
+		# This is a fatal error, no need to retry
+		break
 	    } on error {err info} {
-		puts "[clock milliseconds] ($coro): [dict get $info -errorinfo]"
 		# Something unexpected went wrong. Try to recover.
+		puts "[clock milliseconds] ($coro): [dict get $info -errorinfo]"
+		# Prevent looping too fast
+		set sleep 10000
+	    } finally {
 		if {$fd ne ""} {
+		    # Stop keepalive messages
+		    my timer ping cancel
 		    catch {close $fd}
 		    set fd ""
 		}
-		# Prevent looping too fast
-		my sleep 10000
 	    }
+	    if {$sleep > 0} {my sleep $sleep}
 	}
     }
 
@@ -271,11 +283,16 @@ oo::class create mqtt {
 	    log "Connection failed: $sock"
 	    return 0
 	}
-	set id [my timer init 10000 [list $coro noanswer $sock]]
+	my timer init 10000 [list $coro noanswer $sock]
 	fileevent $sock writable [list $coro connect $sock]
 	# Queue events are allowed to happen during initialization
-	while {[my listen] in {connect queue transmit}} {}
-	after cancel $id
+	try {
+	    while {[my listen] in {connect queue transmit}} {}
+	} finally {
+	    # Cancel the timer even if [my listen] fails, while allowing
+	    # the error to continue to percolate up the call stack
+	    my timer init cancel
+	}
 	if {$fd ne ""} {
 	    return 1
 	} else {
@@ -311,7 +328,30 @@ oo::class create mqtt {
 	    }
 	    receive {
 		set msg [my receive]
-		if {[dict size $msg] != 0} {
+		if {[dict exists $msg retcode]} {
+		    switch -- [dict get $msg retcode] {
+			0 {# Connection Accepted}
+			1 {
+			    throw {MQTT CONNECTION REFUSED PROTOCOL} \
+			      "unacceptable protocol version"
+			}
+			2 {
+			    throw {MQTT CONNECTION REFUSED IDENTIFIER} \
+			      "identifier rejected"
+			}
+			3 {
+			    throw {MQTT CONNECTION REFUSED SERVER} \
+			      "server unavailable"
+			}
+			4 {
+			    throw {MQTT CONNECTION REFUSED LOGIN} \
+			      "bad user name or password"
+			}
+			5 {
+			    throw {MQTT CONNECTION REFUSED AUTH} \
+			      "not authorized"
+			}
+		    }
 		}
 	    }
 	    queue {
@@ -341,7 +381,7 @@ oo::class create mqtt {
     method ack {type msgid} {
 	variable pending
 	if {[info exists pending($type,$msgid)]} {
-	    my timer $msgid cancel [dict get $pending($type,$msgid) id]
+	    my timer $msgid cancel
 	    unset pending($type,$msgid)
 	}
     }
