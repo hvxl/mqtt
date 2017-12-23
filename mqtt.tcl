@@ -38,14 +38,7 @@ oo::class create mqtt {
     }
 
     destructor {
-	my variable fd timer coro
-	my message DISCONNECT
-	foreach n [array names timer] {
-	    after cancel $timer($n)
-	}
-	if {$fd ne ""} {
-	    catch {close $fd}
-	}
+	my disconnect
     }
 
     method report {dir type dict} {
@@ -165,6 +158,21 @@ oo::class create mqtt {
 	coroutine [self object]_coro my client $name $host $port
     }
 
+    method disconnect {} {
+	my variable fd timer coro
+	my message DISCONNECT
+	foreach n [array names timer] {
+	    after cancel $timer($n)
+	}
+	if {$coro ne ""} {
+	    set coro [$coro destroy]
+	}
+	if {$fd ne ""} {
+	    catch {close $fd}
+	    set fd ""
+	}
+    }
+
     # Allow yield resumption with multiple arguments
     method yieldm {{value ""}} {
 	yieldto return -level 0 $value
@@ -224,9 +232,11 @@ oo::class create mqtt {
 	    }
 	}
 
+	set retry 0
 	while {1} {
 	    try {
 		if {[my init $host $port]} {
+		    set ms [clock milliseconds]
 		    if {[dict get $config -clean]} {
 			# Reinstate subscriptions
 			foreach pat [dict keys $subscriptions] {
@@ -242,6 +252,18 @@ oo::class create mqtt {
 			my listen
 		    }
 		    set sleep 0
+		    # If the connection was established but lost again very
+		    # quickly, we were possibly stealing the connection from
+		    # another client with the same name, who took it back
+		    if {[clock milliseconds] < $ms + 1000} {
+			if {$retry <= 0} {
+			    set sleep 30000
+			} else {
+			    incr retry -1
+			}
+		    } else {
+			set retry 3
+		    }
 		} else {
 		    set sleep 10000
 		}
@@ -287,7 +309,7 @@ oo::class create mqtt {
 	fileevent $sock writable [list $coro connect $sock]
 	# Queue events are allowed to happen during initialization
 	try {
-	    while {[my listen] in {connect queue transmit}} {}
+	    while {[my listen $sock] in {connect queue transmit}} {}
 	} finally {
 	    # Cancel the timer even if [my listen] fails, while allowing
 	    # the error to continue to percolate up the call stack
@@ -300,10 +322,10 @@ oo::class create mqtt {
 	}
     }
 
-    method listen {} {
+    method listen {{sock ""}} {
 	my variable coro fd queue connect pending
 	if {$fd ne ""} {
-	    fileevent $fd readable [list $coro receive]
+	    fileevent $fd readable [list $coro receive $fd]
 	}
 	set args [lassign [my yieldm] event]
 	switch -- $event {
@@ -327,29 +349,34 @@ oo::class create mqtt {
 		}
 	    }
 	    receive {
-		set msg [my receive]
-		if {[dict exists $msg retcode]} {
-		    switch -- [dict get $msg retcode] {
-			0 {# Connection Accepted}
-			1 {
-			    throw {MQTT CONNECTION REFUSED PROTOCOL} \
-			      "unacceptable protocol version"
-			}
-			2 {
-			    throw {MQTT CONNECTION REFUSED IDENTIFIER} \
-			      "identifier rejected"
-			}
-			3 {
-			    throw {MQTT CONNECTION REFUSED SERVER} \
-			      "server unavailable"
-			}
-			4 {
-			    throw {MQTT CONNECTION REFUSED LOGIN} \
-			      "bad user name or password"
-			}
-			5 {
-			    throw {MQTT CONNECTION REFUSED AUTH} \
-			      "not authorized"
+		if {[lindex $args 0] ne $fd} {
+		    # Get rid of interfering file handle
+		    catch {close [lindex $args 0]}
+		} else {
+		    set msg [my receive]
+		    if {[dict exists $msg retcode]} {
+			switch -- [dict get $msg retcode] {
+			    0 {# Connection Accepted}
+			    1 {
+				throw {MQTT CONNECTION REFUSED PROTOCOL} \
+				  "unacceptable protocol version"
+			    }
+			    2 {
+				throw {MQTT CONNECTION REFUSED IDENTIFIER} \
+				  "identifier rejected"
+			    }
+			    3 {
+				throw {MQTT CONNECTION REFUSED SERVER} \
+				  "server unavailable"
+			    }
+			    4 {
+				throw {MQTT CONNECTION REFUSED LOGIN} \
+				  "bad user name or password"
+			    }
+			    5 {
+				throw {MQTT CONNECTION REFUSED AUTH} \
+				  "not authorized"
+			    }
 			}
 		    }
 		}
@@ -373,6 +400,12 @@ oo::class create mqtt {
 		    # Retransmit the message
 		    my message $type $msg
 		}
+	    }
+	    destroy {
+		if {$sock ne ""} {close $sock}
+		if {$fd ne ""} {set fd [close $fd]}
+		# Exit all the way out of the coroutine
+		return -level [info level]
 	    }
 	}
 	return $event
@@ -755,3 +788,5 @@ oo::class create mqtt {
 	return
     }
 }
+
+oo::objdefine mqtt {forward log proc ::mqtt::log}
