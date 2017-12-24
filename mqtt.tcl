@@ -1,10 +1,9 @@
-package require Tcl 8.6
-
-# MQTT Utilities
+# MQTT Utilities - 2017 Schelte Bron
 # Small library of routines for mqtt comms.
 # Based on code by Mark Lawson
-# BTW, some of this stuff only makes sense if you have the MQTT v3 spec handy.
-#
+# BTW, some of this stuff only makes sense if you have the MQTT spec handy.
+
+package require Tcl 8.6
 
 namespace eval mqtt {
     proc log {str} {
@@ -21,6 +20,7 @@ oo::class create mqtt {
 	    -username		""
 	    -password		""
 	    -clean		1
+	    -protocol		4
 	}
 	variable fd "" data "" queue {} connect {} coro ""
 	variable keepalive [expr {[dict get $config -keepalive] * 1000}]
@@ -105,6 +105,11 @@ oo::class create mqtt {
 	log $str
     }
 
+    method protocol {} {
+	my variable config
+	return [dict get $config -protocol]
+    }
+
     method configure {args} {
 	my variable config
 	if {[llength $args] == 0} {
@@ -143,6 +148,12 @@ oo::class create mqtt {
 		    -clean {
 			set val [expr {![string is false -strict $val]}]
 		    }
+		    -protocol {
+			if {$val ni {3 4}} {
+			    error "only protocol levels 3 (3.1)\
+			      and 4 (3.1.1) are currently supported"
+			}
+		    }
 		}
 		dict set config $opt $val
 	    }
@@ -150,10 +161,18 @@ oo::class create mqtt {
     }
 
     method connect {name {host localhost} {port 1883}} {
-	my variable coro
+	my variable coro config
 	if {$coro ne ""} {error "illegal request"}
-	if {$name eq "" || [string length $name] > 23} {
-	    error [format {invalid client identifier: "%s"} $name]
+	set level [my protocol]
+	if {$level == 4} {
+	    if {$name eq "" && ![dict get $config -clean]} {
+		error "a zero-length client identifier is not allowed\
+		  when the -clean option is set to false"
+	    }
+	} elseif {$level == 3} {
+	    if {$name eq "" || [string length $name] > 23} {
+		error [format {invalid client identifier: "%s"} $name]
+	    }
 	}
 	coroutine [self object]_coro my client $name $host $port
     }
@@ -320,15 +339,23 @@ oo::class create mqtt {
 	    # the error to continue to percolate up the call stack
 	    my timer init cancel
 	}
-	if {$fd eq $sock} {
-	    return 1
-	} else {
+	if {$fd ne $sock} {
 	    close $sock
 	    return 0
 	}
+	# Expect a CONNACK in a reasonable time
+	my variable config
+	my timer connack [dict get $config -retransmit] [list $coro noanswer]
+	try {
+	    while {[set event [my listen $sock CONNACK]] \
+	      in {partial queue transmit}} {}
+	} finally {
+	    my timer connack cancel
+	}
+	return [expr {$event eq {connack}}]
     }
 
-    method listen {{sock ""}} {
+    method listen {{sock ""} {expect {}}} {
 	my variable coro fd queue connect pending
 	if {$fd ne "" && ![eof $fd]} {
 	    fileevent $fd readable [list $coro receive $fd]
@@ -352,10 +379,20 @@ oo::class create mqtt {
 		}
 	    }
 	    receive {
-		set msg [my receive]
-		if {[dict exists $msg retcode]} {
+		set msg [my receive $expect]
+		if {[dict size $msg] == 0} {
+		    if {[eof $fd]} {
+			log "encountered EOF on $fd"
+			fileevent $fd readable {}
+			set event eof
+		    } else {
+			set event partial
+		    }
+		} elseif {[dict exists $msg retcode]} {
 		    switch -- [dict get $msg retcode] {
-			0 {# Connection Accepted}
+			0 {# Connection Accepted
+			    set event connack
+			}
 			1 {
 			    throw {MQTT CONNECTION REFUSED PROTOCOL} \
 			      "unacceptable protocol version"
@@ -377,9 +414,6 @@ oo::class create mqtt {
 			      "not authorized"
 			}
 		    }
-		} elseif {[eof $fd]} {
-		    log "encountered EOF on $fd"
-		    fileevent $fd readable {}
 		}
 	    }
 	    queue {
@@ -420,7 +454,7 @@ oo::class create mqtt {
 	}
     }
 
-    method receive {} {
+    method receive {{expect {}}} {
 	my variable fd data msgtype store
 	if {[string length $data] < 1} {append data [read $fd 1]}
 	if {[binary scan $data cu hdr] < 1} return
@@ -442,6 +476,10 @@ oo::class create mqtt {
 	    if {$hdr & $mask} {dict lappend rc flags $n}
 	    incr mask $mask
 	}
+	set data ""
+	if {[llength $expect] && $type ni $expect} {
+	    return $rc
+	}
 	switch -- $type {
 	    CONNACK {
 		binary scan $payload cucu session retcode
@@ -453,29 +491,29 @@ oo::class create mqtt {
 		if {"assure" in [dict get $rc flags]} {
 		    # Decode the message
 		    set fmt [format x2a%dSua* $topiclen]
-		    binary scan $payload $fmt topic msgid data
+		    binary scan $payload $fmt topic msgid content
 		    dict set rc msgid $msgid
 		    # Store the data
-		    set store($msgid) [list $topic $data]
+		    set store($msgid) [list $topic $content]
 		    # Indicate reception of the PUBLISH message
 		    my message PUBREC [dict create msgid $msgid]
 		} elseif {"ack" in [dict get $rc flags]} {
 		    # Decode the message
 		    set fmt [format x2a%dSua* $topiclen]
-		    binary scan $payload $fmt topic msgid data
+		    binary scan $payload $fmt topic msgid content
 		    dict set rc msgid $msgid
 		    # Distribute the content to all subscribers
-		    my distribute $topic $data
+		    my distribute $topic $content
 		    # Indicate reception of the PUBLISH message
 		    my message PUBACK [dict create msgid $msgid]
 		} else {
 		    set fmt [format x2a%da* $topiclen]
-		    binary scan $payload $fmt topic data
+		    binary scan $payload $fmt topic content
 		    # Distribute the content to all subscribers
-		    my distribute $topic $data
+		    my distribute $topic $content
 		}
 		dict set rc topic $topic
-		dict set rc data $data
+		dict set rc data $content
 	    }
 	    PUBACK {
 		if {[binary scan $payload Su msgid] == 1} {
@@ -522,7 +560,6 @@ oo::class create mqtt {
 	    }
 	}
 	my report received $type $rc
-	set data ""
 	return $rc
     }
 
@@ -680,8 +717,13 @@ oo::class create mqtt {
 		append payload [my bin [dict get $msg password]]
 	    }
 	}
-	set data [my bin MQIsdp]
-	append data [binary format ccS 3 $flags [dict get $msg keepalive]]
+	set level [my protocol]
+	if {$level < 4} {
+	    set data [my bin MQIsdp]
+	} else {
+	    set data [my bin MQTT]
+	}
+	append data [binary format ccS $level $flags [dict get $msg keepalive]]
 	append data $payload
 	return $data
     }
@@ -788,6 +830,9 @@ oo::class create mqtt {
 	set msg {flags {}}
 	return
     }
+
+    unexport ack bin client distribute init listen match message protocol
+    unexport receive report seqnum sleep str timer yieldm
 }
 
 oo::objdefine mqtt {forward log proc ::mqtt::log}
