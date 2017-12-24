@@ -219,7 +219,7 @@ oo::class create mqtt {
     }
 
     method client {name host port} {
-	my variable fd queue config connect subscriptions
+	my variable fd queue config connect subscriptions pending
 	variable coro [info coroutine]
 
 	dict set connect client $name
@@ -283,6 +283,11 @@ oo::class create mqtt {
 		    catch {close $fd}
 		    set fd ""
 		}
+		# Cancel all retransmits
+		foreach n [array names pending] {
+		    my timer [dict get $pending($n) msg msgid] cancel
+		    unset pending($n)
+		}
 	    }
 	    if {$sleep > 0} {my sleep $sleep}
 	}
@@ -298,7 +303,7 @@ oo::class create mqtt {
 	my variable fd coro
 	if {$fd ne ""} {
 	    log "Warning: Init called ($host:$port) while fd = $fd"
-	    return
+	    return 0
 	}
 	log "Connecting to $host on port $port"
 	if {[catch {socket -async $host $port} sock]} {
@@ -309,76 +314,72 @@ oo::class create mqtt {
 	fileevent $sock writable [list $coro connect $sock]
 	# Queue events are allowed to happen during initialization
 	try {
-	    while {[my listen $sock] in {connect queue transmit}} {}
+	    while {[my listen $sock] in {queue transmit}} {}
 	} finally {
 	    # Cancel the timer even if [my listen] fails, while allowing
 	    # the error to continue to percolate up the call stack
 	    my timer init cancel
 	}
-	if {$fd ne ""} {
+	if {$fd eq $sock} {
 	    return 1
 	} else {
+	    close $sock
 	    return 0
 	}
     }
 
     method listen {{sock ""}} {
 	my variable coro fd queue connect pending
-	if {$fd ne ""} {
+	if {$fd ne "" && ![eof $fd]} {
 	    fileevent $fd readable [list $coro receive $fd]
 	}
 	set args [lassign [my yieldm] event]
 	switch -- $event {
 	    noanswer {
-		set sock [lindex $args 0]
-		catch {close $sock}
-		if {$sock eq $fd} {set fd ""}
+		log "Connection timed out"
 	    }
 	    connect {
 		set sock [lindex $args 0]
 		set error [fconfigure $sock -error]
+		fileevent $sock writable {}
 		if {$error eq ""} {
-		    fileevent $sock writable {}
 		    set fd $sock
 		    fconfigure $fd \
 		      -blocking 0 -buffering none -translation binary
 		    my message CONNECT $connect
 		} else {
 		    log "Connection failed: $error"
-		    catch {close $sock}
 		}
 	    }
 	    receive {
-		if {[lindex $args 0] ne $fd} {
-		    # Get rid of interfering file handle
-		    catch {close [lindex $args 0]}
-		} else {
-		    set msg [my receive]
-		    if {[dict exists $msg retcode]} {
-			switch -- [dict get $msg retcode] {
-			    0 {# Connection Accepted}
-			    1 {
-				throw {MQTT CONNECTION REFUSED PROTOCOL} \
-				  "unacceptable protocol version"
-			    }
-			    2 {
-				throw {MQTT CONNECTION REFUSED IDENTIFIER} \
-				  "identifier rejected"
-			    }
-			    3 {
-				throw {MQTT CONNECTION REFUSED SERVER} \
-				  "server unavailable"
-			    }
-			    4 {
-				throw {MQTT CONNECTION REFUSED LOGIN} \
-				  "bad user name or password"
-			    }
-			    5 {
-				throw {MQTT CONNECTION REFUSED AUTH} \
-				  "not authorized"
-			    }
+		set msg [my receive]
+		if {[dict exists $msg retcode]} {
+		    switch -- [dict get $msg retcode] {
+			0 {# Connection Accepted}
+			1 {
+			    throw {MQTT CONNECTION REFUSED PROTOCOL} \
+			      "unacceptable protocol version"
+			}
+			2 {
+			    throw {MQTT CONNECTION REFUSED IDENTIFIER} \
+			      "identifier rejected"
+			}
+			3 {
+			    throw {MQTT CONNECTION REFUSED SERVER} \
+			      "server unavailable"
+			}
+			4 {
+			    throw {MQTT CONNECTION REFUSED LOGIN} \
+			      "bad user name or password"
+			}
+			5 {
+			    throw {MQTT CONNECTION REFUSED AUTH} \
+			      "not authorized"
 			}
 		    }
+		} elseif {[eof $fd]} {
+		    log "encountered EOF on $fd"
+		    fileevent $fd readable {}
 		}
 	    }
 	    queue {
