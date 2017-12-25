@@ -66,8 +66,8 @@ oo::class create mqtt {
 		    dict set tmp msgid [dict get $dict msgid]
 		}
 		if {"retain" in $flags} {dict incr tmp retain}
-		if {"ack" in $flags} {dict incr tmp qos}
-		if {"assure" in $flags} {dict incr tmp qos 2}
+		if {"ack" in $flags} {dict set tmp qos 1}
+		if {"assure" in $flags} {dict set tmp qos 2}
 		if {"dup" in $flags} {dict incr tmp dup}
 		foreach n {dup qos retain msgid} {
 		    if {[dict exists $tmp $n]} {
@@ -103,11 +103,6 @@ oo::class create mqtt {
 	    append str " ([join $arglist {, }])"
 	}
 	log $str
-    }
-
-    method protocol {} {
-	my variable config
-	return [dict get $config -protocol]
     }
 
     method configure {args} {
@@ -161,11 +156,11 @@ oo::class create mqtt {
     }
 
     method connect {name {host localhost} {port 1883}} {
-	my variable coro config
+	my variable coro
 	if {$coro ne ""} {error "illegal request"}
-	set level [my protocol]
+	set level [my configure -protocol]
 	if {$level == 4} {
-	    if {$name eq "" && ![dict get $config -clean]} {
+	    if {$name eq "" && ![my configure -clean]} {
 		error "a zero-length client identifier is not allowed\
 		  when the -clean option is set to false"
 	    }
@@ -238,16 +233,18 @@ oo::class create mqtt {
     }
 
     method client {name host port} {
-	my variable fd queue config connect subscriptions pending
+	my variable fd queue connect subscriptions pending
 	variable coro [info coroutine]
 
 	dict set connect client $name
-	dict set connect keepalive [dict get $config -keepalive]
-	dict set connect clean [dict get $config -clean]
-	if {[dict get $config -username] ne ""} {
-	    dict set connect username [dict get $config -username]
-	    if {[dict get $config -password] ne ""} {
-		dict set connect password [dict get $config -password]
+	dict set connect keepalive [my configure -keepalive]
+	dict set connect clean [my configure -clean]
+	dict set connect username [my configure -username]
+	if {[dict get $connect username] eq ""} {
+	    dict unset connect username
+	    dict set connect password [my configure -password]
+	    if {[dict get $connect password] eq ""} {
+		dict unset connect password
 	    }
 	}
 
@@ -256,19 +253,19 @@ oo::class create mqtt {
 	    try {
 		if {[my init $host $port]} {
 		    set ms [clock milliseconds]
-		    if {[dict get $config -clean]} {
-			# Reinstate subscriptions
-			foreach pat [dict keys $subscriptions] {
-			    set msg [dict create topics [dict create $pat 2]]
-			    my message SUBSCRIBE $msg
-			}
-		    }
+		    my subscriptions 1
 		    while {$fd ne "" && ![eof $fd]} {
 			foreach n $queue {
 			    my message {*}$n
 			}
 			set queue ""
-			my listen
+			set sqid ""
+			while {[my listen] in {subqueue}} {
+			    if {$sqid eq ""} {
+				set sqid [after idle [list $coro subscriptions]]
+			    }
+			}
+			if {$sqid ne ""} {my subscriptions}
 		    }
 		    set sleep 0
 		    # If the connection was established but lost again very
@@ -292,7 +289,7 @@ oo::class create mqtt {
 		break
 	    } on error {err info} {
 		# Something unexpected went wrong. Try to recover.
-		puts "[clock milliseconds] ($coro): [dict get $info -errorinfo]"
+		log "($coro): [dict get $info -errorinfo]"
 		# Prevent looping too fast
 		set sleep 10000
 	    } finally {
@@ -302,9 +299,22 @@ oo::class create mqtt {
 		    catch {close $fd}
 		    set fd ""
 		}
-		# Cancel all retransmits
+		# Cancel all retransmits, and requeue messages
+		set queue {}
 		foreach n [array names pending] {
-		    my timer [dict get $pending($n) msg msgid] cancel
+		    set msg [dict get $pending($n) msg]
+		    my timer [dict get $msg msgid] cancel
+		    # Remove the dup flag
+		    dict update msg flags flags {
+			set flags [lsearch -all -inline -exact -not $flags dup]
+		    }
+		    set type [lindex [split $n ,] 0]
+		    if {$type in {PUBLISH PUBREL}} {
+			lappend queue PUBLISH $msg
+		    }
+		    if {$type in {SUBSCRIBE UNSUBSCRIBE}} {
+			lappend queue $type $msg
+		    }
 		    unset pending($n)
 		}
 	    }
@@ -333,7 +343,7 @@ oo::class create mqtt {
 	fileevent $sock writable [list $coro connect $sock]
 	# Queue events are allowed to happen during initialization
 	try {
-	    while {[my listen $sock] in {queue transmit}} {}
+	    while {[my listen $sock] in {queue subqueue transmit}} {}
 	} finally {
 	    # Cancel the timer even if [my listen] fails, while allowing
 	    # the error to continue to percolate up the call stack
@@ -344,11 +354,10 @@ oo::class create mqtt {
 	    return 0
 	}
 	# Expect a CONNACK in a reasonable time
-	my variable config
-	my timer connack [dict get $config -retransmit] [list $coro noanswer]
+	my timer connack [my configure -retransmit] [list $coro noanswer]
 	try {
 	    while {[set event [my listen $sock CONNACK]] \
-	      in {partial queue transmit}} {}
+	      in {partial queue subqueue transmit}} {}
 	} finally {
 	    my timer connack cancel
 	}
@@ -373,6 +382,7 @@ oo::class create mqtt {
 		    set fd $sock
 		    fconfigure $fd \
 		      -blocking 0 -buffering none -translation binary
+		    variable data "" pingmiss 0
 		    my message CONNECT $connect
 		} else {
 		    log "Connection failed: $error"
@@ -416,7 +426,7 @@ oo::class create mqtt {
 		    }
 		}
 	    }
-	    queue {
+	    queue - subqueue {
 		lappend queue $args
 	    }
 	    transmit {
@@ -424,6 +434,16 @@ oo::class create mqtt {
 	    }
 	    keepalive {
 		my message PINGREQ
+		my timer pong [my configure -retransmit] [list $coro dead]
+	    }
+	    dead {
+		my variable pingmiss
+		log "No PINGRESP received"
+		if {[incr pingmiss] < 5} {
+		    after idle [list $coro keepalive]
+		} else {
+		    if {$fd ne ""} {set fd [close $fd]}
+		}
 	    }
 	    retransmit {
 		lassign $args type msgid
@@ -432,8 +452,12 @@ oo::class create mqtt {
 		    if {"dup" ni [dict get $msg flags]} {
 			dict lappend msg flags dup
 		    }
-		    # Retransmit the message
-		    my message $type $msg
+		    if {[dict get $pending($type,$msgid) count] <= 5} {
+			# Retransmit the message
+			my message $type $msg
+		    } else {
+			log "Server failed to respond"
+		    }
 		}
 	    }
 	    destroy {
@@ -454,6 +478,12 @@ oo::class create mqtt {
 	}
     }
 
+    method invalid {msg} {
+	binary scan $msg H* hex
+	log "Invalid message: [regexp -all -inline .. $hex]"
+	return
+    }
+
     method receive {{expect {}}} {
 	my variable fd data msgtype store
 	if {[string length $data] < 1} {append data [read $fd 1]}
@@ -470,45 +500,59 @@ oo::class create mqtt {
 
 	set type [lindex $msgtype [expr {$hdr >> 4}]]
 	set payload [string range $data $ptr end]
+	set msg $data
+	set data ""
+
 	set rc [dict create type $type flags {} payload $payload]
 	set mask 1
 	foreach n {retain ack assure dup} {
 	    if {$hdr & $mask} {dict lappend rc flags $n}
 	    incr mask $mask
 	}
-	set data ""
 	if {[llength $expect] && $type ni $expect} {
+	    log "Received unexpected message: $type"
 	    return $rc
 	}
+	set cmd {}
 	switch -- $type {
 	    CONNACK {
-		binary scan $payload cucu session retcode
+		if {[binary scan $payload cucu session retcode] != 2} {
+		    return [my invalid $msg]
+		}
 		dict set rc session $session
 		dict set rc retcode $retcode
 	    }
 	    PUBLISH {
-		binary scan $payload Su topiclen
+		if {[binary scan $payload Su topiclen] != 1} {
+		    return [my invalid $msg]
+		}
 		if {"assure" in [dict get $rc flags]} {
 		    # Decode the message
 		    set fmt [format x2a%dSua* $topiclen]
-		    binary scan $payload $fmt topic msgid content
+		    if {[binary scan $payload $fmt topic msgid content] != 3} {
+			return [my invalid $msg]
+		    }
 		    dict set rc msgid $msgid
 		    # Store the data
 		    set store($msgid) [list $topic $content]
 		    # Indicate reception of the PUBLISH message
-		    my message PUBREC [dict create msgid $msgid]
+		    set cmd [list my message PUBREC [dict create msgid $msgid]]
 		} elseif {"ack" in [dict get $rc flags]} {
 		    # Decode the message
 		    set fmt [format x2a%dSua* $topiclen]
-		    binary scan $payload $fmt topic msgid content
+		    if {[binary scan $payload $fmt topic msgid content] != 3} {
+			return [my invalid $msg]
+		    }
 		    dict set rc msgid $msgid
 		    # Distribute the content to all subscribers
 		    my distribute $topic $content
 		    # Indicate reception of the PUBLISH message
-		    my message PUBACK [dict create msgid $msgid]
+		    set cmd [list my message PUBACK [dict create msgid $msgid]]
 		} else {
 		    set fmt [format x2a%da* $topiclen]
-		    binary scan $payload $fmt topic content
+		    if {[binary scan $payload $fmt topic content] != 2} {
+			return [my invalid $msg]
+		    }
 		    # Distribute the content to all subscribers
 		    my distribute $topic $content
 		}
@@ -516,50 +560,64 @@ oo::class create mqtt {
 		dict set rc data $content
 	    }
 	    PUBACK {
-		if {[binary scan $payload Su msgid] == 1} {
-		    dict set rc msgid $msgid
-		    my ack PUBLISH $msgid
+		if {[binary scan $payload Su msgid] != 1} {
+		    return [my invalid $msg]
 		}
+		dict set rc msgid $msgid
+		my ack PUBLISH $msgid
 	    }
 	    PUBREC {
-		if {[binary scan $payload Su msgid] == 1} {
-		    dict set rc msgid $msgid
-		    my ack PUBLISH $msgid
-		    my message PUBREL [dict create msgid $msgid]
+		if {[binary scan $payload Su msgid] != 1} {
+		    return [my invalid $msg]
 		}
+		dict set rc msgid $msgid
+		my ack PUBLISH $msgid
+		set cmd [my message PUBREL [dict create msgid $msgid]]
 	    }
 	    PUBREL {
-		if {[binary scan $payload Su msgid] == 1} {
-		    dict set rc msgid $msgid
-		    my ack PUBREC [dict create msgid $msgid]
-		    if {[info exists store($msgid)]} {
-			my distribute {*}$store($msgid)
-			unset store($msgid)
-		    }
-		    my message PUBCOMP [dict create msgid $msgid]
+		if {[binary scan $payload Su msgid] != 1} {
+		    return [my invalid $msg]
 		}
+		dict set rc msgid $msgid
+		my ack PUBREC [dict create msgid $msgid]
+		if {[info exists store($msgid)]} {
+		    my distribute {*}$store($msgid)
+		    unset store($msgid)
+		}
+		set cmd [my message PUBCOMP [dict create msgid $msgid]]
 	    }
 	    PUBCOMP {
-		if {[binary scan $payload Su msgid] == 1} {
-		    dict set rc msgid $msgid
-		    my ack PUBREL $msgid
+		if {[binary scan $payload Su msgid] != 1} {
+		    return [my invalid $msg]
 		}
+		dict set rc msgid $msgid
+		my ack PUBREL $msgid
 	    }
 	    SUBACK {
-		if {[binary scan $payload Sucu* msgid codes] == 2} {
-		    dict set rc msgid $msgid
-		    dict set rc results $codes
-		    my ack SUBSCRIBE $msgid
+		if {[binary scan $payload Sucu* msgid codes] != 2} {
+		    return [my invalid $msg]
 		}
+		dict set rc msgid $msgid
+		dict set rc results $codes
+		my ack SUBSCRIBE $msgid
 	    }
 	    UNSUBACK {
-		if {[binary scan $payload Su msgid] == 1} {
-		    dict set rc msgid $msgid
-		    my ack UNSUBSCRIBE $msgid
+		if {[binary scan $payload Su msgid] != 1} {
+		    return [my invalid $msg]
 		}
+		dict set rc msgid $msgid
+		my ack UNSUBSCRIBE $msgid
+	    }
+	    PINGRESP {
+		variable pingmiss 0
+		my timer pong cancel
+	    }
+	    default {
+		return [my invalid $msg]
 	    }
 	}
 	my report received $type $rc
+	{*}$cmd
 	return $rc
     }
 
@@ -579,14 +637,14 @@ oo::class create mqtt {
 	dict for {pat cmds} $subscriptions {
 	    if {[my match $pat $topic]} {
 		foreach n $cmds {
-		    after idle [linsert $n end $topic $data]
+		    after idle [linsert [lindex $n 1] end $topic $data]
 		}
 	    }
 	}
     }
 
     method message {type {msg {}}} {
-	my variable msgtype fd pending coro config keepalive
+	my variable msgtype fd pending coro keepalive
 	# Can only send a message when connected
 	if {$fd eq ""} {return 0}
 
@@ -599,8 +657,11 @@ oo::class create mqtt {
 	set hdr [expr {[lsearch -exact $msgtype $type] << 4}]
 	set flags [dict get $msg flags]
 	if {"dup" in $flags} {set hdr [expr {$hdr | 0b1000}]}
-	if {"ack" in $flags} {set hdr [expr {$hdr | 0b010}]}
-	if {"assure" in $flags} {set hdr [expr {$hdr | 0b100}]}
+	if {"assure" in $flags} {
+	    set hdr [expr {$hdr | 0b100}]
+	} elseif {"ack" in $flags} {
+	    set hdr [expr {$hdr | 0b010}]
+	}
 	if {"retain" in $flags} {set hdr [expr {$hdr | 0b1}]}
 
 	# Calculate the data length
@@ -615,7 +676,7 @@ oo::class create mqtt {
 	if {"ack" in $flags || "assure" in $flags} {
 	    set msgid [dict get $msg msgid]
 	    dict set pending($type,$msgid) msg $msg
-	    set ms [dict get $config -retransmit]
+	    set ms [my configure -retransmit]
 	    set cmd [list $coro retransmit $type $msgid]
 	    dict set pending($type,$msgid) id [my timer $msgid $ms $cmd]
 	    dict incr pending($type,$msgid) count
@@ -635,26 +696,64 @@ oo::class create mqtt {
 	}
     }
 
-    method subscribe {pattern prefix} {
-	my variable subscriptions coro
-	if {![dict exists $subscriptions $pattern]} {
-	    set msg [dict create topics [dict create $pattern 2]]
-	    $coro transmit SUBSCRIBE $msg
+    method subscriptions {{init 0}} {
+	my variable subscriptions queue
+	set sub {}
+	set unsub {}
+	if {$init && [my configure -clean]} {
+	    # Reinstate subscriptions
+	    dict for {pat pfx} $subscriptions {
+		set qos [lindex $pfx 0 0]
+		if {$qos >= 0} {dict set sub topics $pat $qos}
+	    }
+	} else {
+	    set list [lsearch -all -inline -index 0 $queue *SUBSCRIBE]
+	    foreach n $list {
+		set msg [lindex $n 1]
+		if {[dict exists $msg topics]} {
+		    dict for {pat qos} [dict get $msg topics] {
+			if {![dict exists $subscriptions $pat]} {
+			    dict set unsub topics $pat $qos
+			} elseif {$qos ne ""} {
+			    dict set sub topics $pat $qos
+			}
+		    }
+		}
+	    }
 	}
-	dict lappend subscriptions $pattern $prefix
+	set queue [lsearch -all -inline -not -index 0 $queue *SUBSCRIBE]
+	if {[dict size $unsub] > 0} {my message UNSUBSCRIBE $unsub}
+	if {[dict size $sub] > 0} {my message SUBSCRIBE $sub}
+    }
+
+    method subscribe {pattern prefix {qos 2}} {
+	my variable subscriptions coro
+	if {$qos > 2} {set qos 2}
+	set oldqos -1
+	dict update subscriptions $pattern pat {
+	    if {[info exists pat]} {set oldqos [lindex $pat 0 0]}
+	    lappend pat [list $qos $prefix]
+	    set pat [lsort -integer -decreasing -index 0 $pat]
+	}
+	if {$qos > $oldqos} {
+	    set msg [dict create topics [dict create $pattern $qos]]
+	    $coro subqueue SUBSCRIBE $msg
+	}
 	return
     }
 
     method unsubscribe {pattern prefix} {
 	my variable subscriptions coro
-	if {[dict exists $subscriptions $pattern]} {
-	    dict update subscriptions $pattern pat {
-		set pat [lsearch -all -inline -exact -not $pat $prefix]
-		if {[llength $pat] == 0} {
-		    unset pat
-		    set msg [dict create topics [dict create $pattern 2]]
-		    $coro transmit UNSUBSCRIBE $msg
-		}
+	if {![dict exists $subscriptions $pattern]} {
+	    if {[my configure -clean]} return
+	    dict set $subscriptions $pattern {}
+	}
+	dict update subscriptions $pattern pat {
+	    set pat [lsearch -all -inline -exact -index 1 -not $pat $prefix]
+	    if {[llength $pat] == 0} {
+		unset pat
+		set msg [dict create topics [dict create $pattern {}]]
+		$coro subqueue UNSUBSCRIBE $msg
 	    }
 	}
     }
@@ -717,7 +816,7 @@ oo::class create mqtt {
 		append payload [my bin [dict get $msg password]]
 	    }
 	}
-	set level [my protocol]
+	set level [my configure -protocol]
 	if {$level < 4} {
 	    set data [my bin MQIsdp]
 	} else {
@@ -730,8 +829,9 @@ oo::class create mqtt {
 
     method CONNACK {msgvar} {
 	upvar 1 $msgvar msg
-	set msg [dict merge {retcode 0} $msg {flags {}}]
-	return [binary format cc 0 [dict get $msg retcode]]
+	set msg [dict merge {session 0 retcode 0} $msg {flags {}}]
+	return [binary format cc \
+	  [dict get $msg session] [dict get $msg retcode]]
     }
 
     method PUBLISH {msgvar} {
@@ -831,8 +931,8 @@ oo::class create mqtt {
 	return
     }
 
-    unexport ack bin client distribute init listen match message protocol
-    unexport receive report seqnum sleep str timer yieldm
+    unexport ack bin client distribute init invalid listen match message
+    unexport receive report seqnum sleep str subscriptions timer yieldm
 }
 
 oo::objdefine mqtt {forward log proc ::mqtt::log}
