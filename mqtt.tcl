@@ -572,7 +572,7 @@ oo::class create mqtt {
 		}
 		dict set rc msgid $msgid
 		my ack PUBLISH $msgid
-		set cmd [my message PUBREL [dict create msgid $msgid]]
+		set cmd [list my message PUBREL [dict create msgid $msgid]]
 	    }
 	    PUBREL {
 		if {[binary scan $payload Su msgid] != 1} {
@@ -584,7 +584,7 @@ oo::class create mqtt {
 		    my distribute {*}$store($msgid)
 		    unset store($msgid)
 		}
-		set cmd [my message PUBCOMP [dict create msgid $msgid]]
+		set cmd [list my message PUBCOMP [dict create msgid $msgid]]
 	    }
 	    PUBCOMP {
 		if {[binary scan $payload Su msgid] != 1} {
@@ -622,6 +622,9 @@ oo::class create mqtt {
     }
 
     method match {pattern topic} {
+	if {[string index $topic 0] eq "$"} {
+	    if {[string index $pattern 0] ne "$"} {return 0}
+	}
 	foreach p [split $pattern /] n [split $topic /] {
 	    if {$p eq "#"} {
 		return 1
