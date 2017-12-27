@@ -878,7 +878,7 @@ oo::class create mqtt {
     method unsubscribe {pattern prefix} {
 	my variable subscriptions
 	if {![dict exists $subscriptions $pattern]} {
-	    dict set $subscriptions $pattern {ack "" callbacks {}}
+	    dict set subscriptions $pattern {ack "" callbacks {}}
 	}
 	dict with subscriptions $pattern {
 	    set callbacks \
