@@ -24,7 +24,7 @@ oo::class create mqtt {
 	}
 	variable fd "" data "" queue {} connect {} coro "" events {}
 	variable keepalive [expr {[dict get $config -keepalive] * 1000}]
-	variable subscriptions {} seqnum 0 statustopic {$LOCAL}
+	variable subscriptions {} seqnum 0 statustopic {$LOCAL} online 0
 
 	# Message types
 	variable msgtype {
@@ -196,6 +196,7 @@ oo::class create mqtt {
 	    # Stop keepalive messages
 	    my timer ping cancel
 	    my timer subscribe cancel
+	    variable online 0
 	    catch {close $fd}
 	    set fd ""
 	    my status connection \
@@ -245,7 +246,7 @@ oo::class create mqtt {
     }
 
     method client {name host port} {
-	my variable fd queue connect pending
+	my variable fd queue connect pending online
 	variable coro [info coroutine]
 
 	dict set connect client $name
@@ -269,6 +270,7 @@ oo::class create mqtt {
 			# Allow the connection callbacks to run
 			my sleep 0
 		    }
+		    set online 1
 		    my subscriptions 1
 		    while {$fd ne "" && ![eof $fd]} {
 			set queue [foreach n $queue {my message {*}$n}]
@@ -524,7 +526,7 @@ oo::class create mqtt {
 		    dict set status $topic $code
 		    dict set subscriptions $topic ack $code
 		    if {![dict exists $subscriptions callbacks]} {
-			dict set $subscriptions callbacks {}
+			dict set subscriptions callbacks {}
 		    }
 		}
 		my status subscription $status
@@ -538,7 +540,7 @@ oo::class create mqtt {
 		      [llength [dict get $subscriptions callbacks]] == 0} {
 			dict unset subscriptions $topic
 		    } else {
-			dict set $subscriptions ack ""
+			dict set subscriptions ack ""
 		    }
 		}
 		my status subscription $status
@@ -787,17 +789,17 @@ oo::class create mqtt {
     }
 
     method queue {type msg} {
-	my variable queue coro
+	my variable queue online coro
 	lappend queue [list $type $msg]
 	if {$type in {SUBSCRIBE UNSUBSCRIBE}} {
 	    my timer subscribe idle [list [namespace which my] subscriptions]
-	} elseif {$coro ne ""} {
+	} elseif {$online} {
 	    $coro queue
 	}
     }
 
     method subscriptions {{init 0}} {
-	my variable subscriptions queue statustopic coro
+	my variable subscriptions queue statustopic online
 	set list {}
 	set clean [my configure -clean]
 	if {$init && $clean} {
@@ -832,7 +834,7 @@ oo::class create mqtt {
 			dict set subscriptions $pat ack $qos
 		    }
 		    dict set notify $pat $qos
-		} elseif {$coro eq ""} {
+		} elseif {!$online} {
 		    lappend queue $n
 		} elseif {$qos > $ack} {
 		    dict set sub topics $pat $qos
@@ -845,7 +847,7 @@ oo::class create mqtt {
 	}
 
 	if {[dict size $notify]} {my status subscription $notify}
-	if {$coro ne ""} {
+	if {$online} {
 	    if {[dict size $unsub] > 0} {my message UNSUBSCRIBE $unsub}
 	    if {[dict size $sub] > 0} {my message SUBSCRIBE $sub}
 	} else {
