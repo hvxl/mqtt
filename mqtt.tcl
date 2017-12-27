@@ -245,7 +245,7 @@ oo::class create mqtt {
     }
 
     method client {name host port} {
-	my variable fd queue connect subscriptions pending
+	my variable fd queue connect pending
 	variable coro [info coroutine]
 
 	dict set connect client $name
@@ -495,7 +495,7 @@ oo::class create mqtt {
     }
 
     method ack {type msgid ack} {
-	variable pending
+	my variable pending subscriptions
 	if {![info exists pending($type,$msgid)]} return
 	my timer $msgid cancel
 	set msg [dict get $pending($type,$msgid) msg]
@@ -522,12 +522,24 @@ oo::class create mqtt {
 		set topics [dict keys [dict get $msg topics]]
 		foreach topic $topics code [dict get $ack results] {
 		    dict set status $topic $code
+		    dict set subscriptions $topic ack $code
+		    if {![dict exists $subscriptions callbacks]} {
+			dict set $subscriptions callbacks {}
+		    }
 		}
 		my status subscription $status
 	    }
 	    UNSUBSCRIBE {
 		foreach topic [dict keys [dict get $msg topics]] {
 		    dict set status $topic ""
+		    # Don't delete any new subscription requests that
+		    # happened while the unsubscribe was in transit
+		    if {![dict exists $subscriptions callbacks] || \
+		      [llength [dict get $subscriptions callbacks]] == 0} {
+			dict unset subscriptions $topic
+		    } else {
+			dict set $subscriptions ack ""
+		    }
 		}
 		my status subscription $status
 	    }
@@ -711,9 +723,9 @@ oo::class create mqtt {
 	# the coroutine, which could affect the list of events
 	while {[llength $events]} {
 	    set events [lassign $events topic data]
-	    dict for {pat cmds} $subscriptions {
+	    dict for {pat dict} $subscriptions {
 		if {[my match $pat $topic]} {
-		    foreach n $cmds {
+		    foreach n [dict get $dict callbacks] {
 			uplevel #0 [linsert [lindex $n 1] end $topic $data]
 		    }
 		}
@@ -777,58 +789,84 @@ oo::class create mqtt {
     method queue {type msg} {
 	my variable queue coro
 	lappend queue [list $type $msg]
-	if {$coro eq ""} return
 	if {$type in {SUBSCRIBE UNSUBSCRIBE}} {
 	    my timer subscribe idle [list [namespace which my] subscriptions]
-	} else {
+	} elseif {$coro ne ""} {
 	    $coro queue
 	}
     }
 
     method subscriptions {{init 0}} {
-	my variable subscriptions queue statustopic
-	set sub {}
-	set unsub {}
-	if {$init && [my configure -clean]} {
+	my variable subscriptions queue statustopic coro
+	set list {}
+	set clean [my configure -clean]
+	if {$init && $clean} {
 	    # Reinstate subscriptions
-	    dict for {pat pfx} $subscriptions {
-		# Do not send (UN)SUBSCRIBEs for local messages to the broker
-		if {[string match $statustopic/* $pat]} continue
-		set qos [lindex $pfx 0 0]
-		if {$qos >= 0} {dict set sub topics $pat $qos}
-	    }
-	} else {
-	    set list [lsearch -all -inline -index 0 $queue *SUBSCRIBE]
-	    foreach n $list {
-		set msg [lindex $n 1]
-		if {[dict exists $msg topics]} {
-		    dict for {pat qos} [dict get $msg topics] {
-			# Do not send (UN)SUBSCRIBEs for local messages
-			if {[string match $statustopic/* $pat]} continue
-			if {![dict exists $subscriptions $pat]} {
-			    dict set unsub topics $pat $qos
-			} elseif {$qos ne ""} {
-			    dict set sub topics $pat $qos
-			}
-		    }
+	    dict for {pat dict} $subscriptions {
+		set qos [lindex [dict get $dict callbacks] 0 0]
+		if {$qos >= 0 && ![string match $statustopic/* $pat]} {
+		    set msg [dict create topics [dict create $pat $qos]]
+		    lappend list [list SUBSCRIBE $msg]
 		}
 	    }
 	}
+	lappend list {*}[lsearch -all -inline -index 0 $queue *SUBSCRIBE]
+	if {[llength $list] == 0} return
+
 	set queue [lsearch -all -inline -not -index 0 $queue *SUBSCRIBE]
-	if {[dict size $unsub] > 0} {my message UNSUBSCRIBE $unsub}
-	if {[dict size $sub] > 0} {my message SUBSCRIBE $sub}
+
+	set sub {}
+	set unsub {}
+	set notify {}
+	foreach n $list {
+	    set msg [lindex $n 1]
+	    dict for {pat qos} [dict get $msg topics] {
+		if {![dict exists $subscriptions $pat ack]} continue
+		set ack [dict get $subscriptions $pat ack]
+		set qos [lindex [dict get $subscriptions $pat callbacks] 0 0]
+		if {[string match $statustopic/* $pat]} {
+		    if {$qos eq ""} {
+			dict unset subscriptions $pat
+		    } else {
+			if {$ack > $qos} {set qos $ack}
+			dict set subscriptions $pat ack $qos
+		    }
+		    dict set notify $pat $qos
+		} elseif {$coro eq ""} {
+		    lappend queue $n
+		} elseif {$qos > $ack} {
+		    dict set sub topics $pat $qos
+		} elseif {$qos eq "" && ($ack ne "" || !$clean)} {
+		    dict set unsub topics $pat $qos
+		} else {
+		    dict set notify $pat $ack
+		}
+	    }
+	}
+
+	if {[dict size $notify]} {my status subscription $notify}
+	if {$coro ne ""} {
+	    if {[dict size $unsub] > 0} {my message UNSUBSCRIBE $unsub}
+	    if {[dict size $sub] > 0} {my message SUBSCRIBE $sub}
+	} else {
+	    my notifier
+	}
     }
 
     method subscribe {pattern prefix {qos 2}} {
 	my variable subscriptions
 	if {$qos > 2} {set qos 2}
-	set oldqos -1
-	dict update subscriptions $pattern pat {
-	    if {[info exists pat]} {set oldqos [lindex $pat 0 0]}
-	    lappend pat [list $qos $prefix]
-	    set pat [lsort -integer -decreasing -index 0 $pat]
+	if {![dict exists $subscriptions $pattern]} {
+	    dict set subscriptions $pattern {ack "" callbacks {}}
 	}
-	if {$qos > $oldqos} {
+	dict with subscriptions $pattern {
+	    set x [lsearch -exact -index 1 $callbacks $prefix]
+	    if {$x < 0} {
+		lappend callbacks [list $qos $prefix]
+	    } else {
+		lset callbacks $x [list $qos $prefix]
+	    }
+	    set callbacks [lsort -integer -decreasing -index 0 $callbacks]
 	    set msg [dict create topics [dict create $pattern $qos]]
 	    my queue SUBSCRIBE $msg
 	}
@@ -838,16 +876,13 @@ oo::class create mqtt {
     method unsubscribe {pattern prefix} {
 	my variable subscriptions
 	if {![dict exists $subscriptions $pattern]} {
-	    if {[my configure -clean]} return
-	    dict set $subscriptions $pattern {}
+	    dict set $subscriptions $pattern {ack "" callbacks {}}
 	}
-	dict update subscriptions $pattern pat {
-	    set pat [lsearch -all -inline -exact -index 1 -not $pat $prefix]
-	    if {[llength $pat] == 0} {
-		unset pat
-		set msg [dict create topics [dict create $pattern {}]]
-		my queue UNSUBSCRIBE $msg
-	    }
+	dict with subscriptions $pattern {
+	    set callbacks \
+	      [lsearch -all -inline -exact -index 1 -not $callbacks $prefix]
+	    set msg [dict create topics [dict create $pattern {}]]
+	    my queue UNSUBSCRIBE $msg
 	}
     }
 
