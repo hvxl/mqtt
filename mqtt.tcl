@@ -267,6 +267,8 @@ oo::class create mqtt {
 		if {[my init $host $port]} {
 		    set ms [clock milliseconds]
 		    if {[llength $queue]} {
+			# Avoid missing any messages during the brief sleep
+			fileevent $fd readable {}
 			# Allow the connection callbacks to run
 			my sleep 0
 		    }
@@ -319,10 +321,10 @@ oo::class create mqtt {
 		    }
 		    set type [lindex [split $n ,] 0]
 		    if {$type in {PUBLISH PUBREL}} {
-			lappend queue PUBLISH $msg
+			lappend queue [list PUBLISH $msg]
 		    }
 		    if {$type in {SUBSCRIBE UNSUBSCRIBE}} {
-			lappend queue $type $msg
+			lappend queue [list $type $msg]
 		    }
 		    unset pending($n)
 		}
@@ -525,8 +527,8 @@ oo::class create mqtt {
 		foreach topic $topics code [dict get $ack results] {
 		    dict set status $topic $code
 		    dict set subscriptions $topic ack $code
-		    if {![dict exists $subscriptions callbacks]} {
-			dict set subscriptions callbacks {}
+		    if {![dict exists $subscriptions $topic callbacks]} {
+			dict set subscriptions $topic callbacks {}
 		    }
 		}
 		my status subscription $status
@@ -536,11 +538,11 @@ oo::class create mqtt {
 		    dict set status $topic ""
 		    # Don't delete any new subscription requests that
 		    # happened while the unsubscribe was in transit
-		    if {![dict exists $subscriptions callbacks] || \
-		      [llength [dict get $subscriptions callbacks]] == 0} {
+		    if {![dict exists $subscriptions $topic callbacks] || \
+		      ![llength [dict get $subscriptions $topics callbacks]]} {
 			dict unset subscriptions $topic
 		    } else {
-			dict set subscriptions ack ""
+			dict set subscriptions $topic ack ""
 		    }
 		}
 		my status subscription $status
@@ -1059,8 +1061,9 @@ oo::class create mqtt {
 	return
     }
 
-    unexport ack bin client close init invalid listen match message notify
-    unexport queue receive report seqnum sleep status str subscriptions timer
+    unexport ack bin client close init invalid listen match message
+    unexport notifier notify unexport queue receive report
+    unexport seqnum sleep status str subscriptions timer
 }
 
 oo::objdefine mqtt {forward log proc ::mqtt::log}
