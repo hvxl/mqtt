@@ -315,9 +315,9 @@ oo::class create mqtt {
 		foreach n [array names pending] {
 		    set msg [dict get $pending($n) msg]
 		    my timer [dict get $msg msgid] cancel
-		    # Remove the dup flag
+		    # A next attempt will always be a DUP message
 		    dict update msg flags flags {
-			set flags [lsearch -all -inline -exact -not $flags dup]
+			if {"dup" ni $flags} {lappend flags dup}
 		    }
 		    set type [lindex [split $n ,] 0]
 		    if {$type in {PUBLISH PUBREL}} {
@@ -539,7 +539,7 @@ oo::class create mqtt {
 		    # Don't delete any new subscription requests that
 		    # happened while the unsubscribe was in transit
 		    if {![dict exists $subscriptions $topic callbacks] || \
-		      ![llength [dict get $subscriptions $topics callbacks]]} {
+		      ![llength [dict get $subscriptions $topic callbacks]]} {
 			dict unset subscriptions $topic
 		    } else {
 			dict set subscriptions $topic ack ""
@@ -990,9 +990,7 @@ oo::class create mqtt {
 
     method PUBREL {msgvar} {
 	upvar 1 $msgvar msg
-	set msg [dict merge {flags {}} $msg]
-	set flags [lsearch -all -inline -exact [dict get $msg flags] dup]
-	dict set msg flags [lappend flags ack]
+	set msg [dict merge {$msg {flags ack}}]
 	return [my seqnum msg]
     }
 
@@ -1004,9 +1002,7 @@ oo::class create mqtt {
 
     method SUBSCRIBE {msgvar} {
 	upvar 1 $msgvar msg
-	set msg [dict merge {flags {} topics {}} $msg]
-	set flags [lsearch -all -inline -exact [dict get $msg flags] dup]
-	dict set msg flags [lappend flags ack]
+	set msg [dict merge {topics {}} $msg {flags ack}]
 	set data [my seqnum msg]
 	dict for {topic qos} [dict get $msg topics] {
 	    append data [my bin $topic]
@@ -1027,9 +1023,7 @@ oo::class create mqtt {
 
     method UNSUBSCRIBE {msgvar} {
 	upvar 1 $msgvar msg
-	set msg [dict merge {flags {} topics {}} $msg]
-	set flags [lsearch -all -inline -exact [dict get $msg flags] dup]
-	dict set msg flags [lappend flags ack]
+	set msg [dict merge {topics {}} $msg {flags ack}]
 	set data [my seqnum msg]
 	dict for {topic qos} [dict get $msg topics] {
 	    append data [my bin $topic]
@@ -1062,7 +1056,7 @@ oo::class create mqtt {
     }
 
     unexport ack bin client close init invalid listen match message
-    unexport notifier notify unexport queue receive report
+    unexport notifier notify queue receive report
     unexport seqnum sleep status str subscriptions timer
 }
 
