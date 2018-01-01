@@ -891,6 +891,11 @@ oo::class create mqtt {
     }
 
     method publish {topic message {qos 1} {retain 0}} {
+	if {[regexp {[#+]} $topic]} {
+	    # MQTT-3.3.2-2
+	    return -code error -errorcode {MQTT TOPICNAME INVALID} \
+	      "invalid topic name: $topic"
+	}
 	set flags [lindex {{} ack assure} $qos]
 	if {$retain} {lappend flags retain}
 	set msg [dict create topic $topic data $message flags $flags]
