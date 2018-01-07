@@ -811,6 +811,7 @@ oo::class create mqtt {
 		if {$qos >= 0 && ![string match $statustopic/* $pat]} {
 		    set msg [dict create topics [dict create $pat $qos]]
 		    lappend list [list SUBSCRIBE $msg]
+		    dict set subscriptions $pat ack {}
 		}
 	    }
 	}
