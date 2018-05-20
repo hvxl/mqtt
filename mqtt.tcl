@@ -21,6 +21,7 @@ oo::class create mqtt {
 	    -password		""
 	    -clean		1
 	    -protocol		4
+	    -socketcmd		socket
 	}
 	variable fd "" data "" queue {} connect {} coro "" events {}
 	variable keepalive [expr {[dict get $config -keepalive] * 1000}]
@@ -349,7 +350,7 @@ oo::class create mqtt {
 	    return 0
 	}
 	log "Connecting to $host on port $port"
-	if {[catch {socket -async $host $port} sock]} {
+	if {[catch {{*}[my configure -socketcmd] -async $host $port} sock]} {
 	    log "Connection failed: $sock"
 	    return 0
 	}
