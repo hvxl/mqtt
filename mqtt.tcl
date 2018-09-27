@@ -232,7 +232,7 @@ oo::class create mqtt {
 
     # Convert from utf8 to a string
     method str {str} {
-	return [encoding convertfrom utf8 $str]
+	return [encoding convertfrom utf-8 $str]
     }
 
     method will {topic {message ""} {qos 1} {retain 0}} {
@@ -569,7 +569,7 @@ oo::class create mqtt {
 	    incr ptr
 	    if {$l < 128} break
 	}
-	append data [read $fd $len]
+	append data [read $fd [expr {$ptr + $len - [string length $data]}]]
 	if {[string length $data] < $ptr + $len} return
 
 	set type [lindex $msgtype [expr {$hdr >> 4}]]
