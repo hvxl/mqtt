@@ -666,7 +666,7 @@ oo::class create mqtt {
 		    }
 		    PINGREQ - PINGRESP - DISCONNECT {}
 		    default {
-			throw {MQTT PAYLOAD UNKNOWN}
+			throw {MQTT PAYLOAD UNKNOWN} "Unknown payload: $type"
 		    }
 		}
 		set rc [dict merge $rc [payload]]
@@ -697,7 +697,7 @@ oo::class create mqtt {
 	    set cnt [llength $parts]
 	    for {set i 1} {$i <= $cnt} {incr i} {lappend vars $i}
 	    if {[binary scan $data @$pos$spec {*}$vars] != $cnt} {
-		throw {MQTT PAYLOAD DEPLETED}
+		throw {MQTT PAYLOAD DEPLETED} "payload too short"
 	    }
 	    set result [lmap v $vars {set $v}]
 	    foreach a $args v $result p $parts {
