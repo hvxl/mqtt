@@ -568,12 +568,15 @@ oo::class create mqtt {
 	    # A message is at least 2 bytes
 	    if {$size < 2} {
 		append data [read $fd [expr {2 - $size}]]
+		set size [string length $data]
 	    }
 	    if {[binary scan $data cucu hdr len] < 2} continue
-	    append data [read $fd $len]
-	    set size [string length $data]
-	    if {$size < 2 + $len} continue
 	    set ptr 2
+	    if {$size < $ptr + $len} {
+		append data [read $fd [expr {$ptr + $len - $size}]]
+		set size [string length $data]
+	    }
+	    if {$size < $ptr + $len} continue
 	    if {$len > 127} {
 		# The max number of bytes in the Remaining Length field is 4
 		binary scan $data x2cu3 length
