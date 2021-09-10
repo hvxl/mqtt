@@ -65,6 +65,36 @@ oo::class create mqtt {
 	my disconnect
     }
 
+    method validate {str {type topic}} {
+	# All Topic Names and Topic Filters MUST be at least one character
+	# long [MQTT-4.7.3-1]
+	if {$str eq ""} {return 0}
+	set rec [split $str /]
+	# The single-level wildcard can be used at any level in the Topic
+	# Filter, including first and last levels. Where it is used it MUST
+	# occupy an entire level of the filter [MQTT-4.7.1-3].
+	foreach term [lsearch -all -inline $rec *+*] {
+	    if {$type ne "filter"} {return 0}
+	    if {$term ne "+"} {return 0}
+	}
+	# The multi-level wildcard character MUST be specified either on its
+	# own or following a topic level separator. In either case it MUST
+	# be the last character specified in the Topic Filter [MQTT-4.7.1-2].
+	foreach pos [lsearch -all $rec *#*] {
+	    if {$type ne "filter"} {return 0}
+	    if {$pos != [llength $rec] - 1} {return 0}
+	    if {[lindex $rec $pos] ne "#"} {return 0}
+	}
+	# Topic Names and Topic Filters MUST NOT include the null character
+	# (Unicode U+0000) [MQTT-4.7.3-2]
+	if {[string first \0 $str] >= 0} {return 0}
+	# Topic Names and Topic Filters are UTF-8 encoded strings, they MUST
+	# NOT encode to more than 65535 bytes [MQTT-4.7.3-3].
+	if {[string length [encoding convertto utf-8]] > 65535} {return 0}
+	# All checks passed
+	return 1
+    }
+
     method report {dir type dict} {
 	lassign $dir dir client
 	set str "[string totitle $dir] $type"
@@ -220,16 +250,15 @@ oo::class create mqtt {
 
     method disconnect {} {
 	my variable timer fd coro
+	my notifier
 	my message $fd DISCONNECT
+	if {$coro ne ""} {
+	    set coro [$coro destroy]
+	}
+	my close
 	foreach n [array names timer] {
 	    after cancel $timer($n)
 	}
-	if {$coro ne ""} {
-	    set coro [$coro destroy]
-	    my notifier
-	}
-	my close
-	tailcall my notifier
     }
 
     method close {{retcode 0}} {
@@ -953,7 +982,7 @@ oo::class create mqtt {
 		    dict set notify $pat $qos
 		} elseif {$fd eq ""} {
 		    lappend queue $n
-		} elseif {$qos > $ack} {
+		} elseif {$qos ne ""} {
 		    dict set sub topics $pat $qos
 		} elseif {$qos eq "" && ($ack ne "" || !$clean)} {
 		    dict set unsub topics $pat $qos
@@ -974,6 +1003,10 @@ oo::class create mqtt {
 
     method subscribe {pattern prefix {qos 2}} {
 	my variable subscriptions
+	if {![my validate $pattern filter]} {
+	    return -code error -errorcode {MQTT FILTER INVALID} \
+	      "invalid topic filter: $pattern"
+	}
 	if {$qos > 2} {set qos 2}
 	if {![dict exists $subscriptions $pattern]} {
 	    dict set subscriptions $pattern {ack "" callbacks {}}
@@ -1018,8 +1051,7 @@ oo::class create mqtt {
     }
 
     method publish {topic message {qos 1} {retain 0}} {
-	if {[regexp {[#+]} $topic]} {
-	    # MQTT-3.3.2-2
+	if {![my validate $topic]} {
 	    return -code error -errorcode {MQTT TOPICNAME INVALID} \
 	      "invalid topic name: $topic"
 	}
