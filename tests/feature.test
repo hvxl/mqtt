@@ -1,0 +1,102 @@
+package require tcltest 2
+namespace import -force tcltest::*
+
+# set capture 1
+loadFile [file join [file dirname [info script]] client.tcl]
+
+loadTestedCommands
+
+test feature-1.0 {unsubscribe without subscription} -constraints MQTTV5 -body {
+    mqtt create mq -protocol 5
+    mq subscribe {$SYS/local/subscription} [list sysmsg done]
+    mq connect tcltest
+    mq unsubscribe tcltest/set/#
+    dict getdef [varwait done 500] result none
+} -cleanup {
+    mq destroy
+} -result {timeout}
+
+test feature-2.0 {send oversize message} -constraints MQTTV5 -setup {
+    echoclient
+} -body {
+    mqtt create mq -protocol 5
+    mq connect tcltest
+    lappend prop UserProperty \
+      {str1 "This string makes the message too large to fit in 100 bytes"} \
+      UserProperty \
+      {str2 "But this string does fit"}
+    mq publish -properties $prop tcltest/echo/tcltest/var/done feature-2.0
+    dict getdef [varwait done 1000] topic ""
+} -cleanup {
+    mq destroy
+} -result {tcltest/var/done}
+
+test feature-3.0 {topic alias} -constraints MQTTV5 -setup {
+    echoclient
+} -body {
+    mqtt create mq -protocol 5
+    mq connect tcltest
+    set prop {TopicAlias 12}
+    mq publish -properties $prop tcltest/var/done data1
+    varwait done 1000
+    mq publish -properties $prop "" data2
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {data2}
+
+test feature-4.0 {message expiry adjustment} -constraints MQTTV5 -setup {
+    echoclient
+} -body {
+    mqtt create mq -protocol 5
+    set prop {MessageExpiryInterval 25}
+    mq publish -properties $prop tcltest/var/done feature-4.0
+    varwait done [expr {([clock seconds] + 1) * 1000 - [clock milliseconds]}]
+    mq connect tcltest
+    dict getdef [varwait done 1000] properties MessageExpiryInterval ""
+} -cleanup {
+    # Remove the retained message so it doesn't interfere with subsequent tests
+    mq publish tcltest/var/done {} 1 1
+    varwait done 1000
+    mq destroy
+} -result {24}
+
+test feature-4.1 {message expire before connect} -constraints MQTTV5 -setup {
+    echoclient
+} -body {
+    mqtt create mq -protocol 5
+    set prop {MessageExpiryInterval 1}
+    mq publish -properties $prop tcltest/var/done feature-4.1
+    varwait done [expr {([clock seconds] + 2) * 1000 - [clock milliseconds]}]
+    mq connect tcltest
+    dict getdef [varwait done 1000] result none
+} -cleanup {
+    mq destroy
+} -result {timeout}
+
+test feature-5.0 {no local} -constraints MQTTV5 -body {
+    mqtt create mq -protocol 5
+    mq connect tcltest
+    mq subscribe tcltest/# [list message] 1 1
+    mq publish tcltest/set/done feature-5.0
+    dict getdef [varwait done 1000] result none
+} -cleanup {
+    mq destroy
+} -result {timeout}
+
+test feature-6.0 {payload format indicator} -constraints MQTTV5 -setup {
+    echoclient
+} -body {
+    mqtt create mq -protocol 5
+    mq connect tcltest
+    set prop {PayloadFormatIndicator 1}
+    mq publish -properties $prop tcltest/var/done €9.99
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {€9.99}
+
+
+# cleanup
+kill
+cleanupTests

@@ -1,0 +1,262 @@
+package require tcltest 2
+namespace import -force tcltest::*
+
+#set capture 1
+loadFile [file join [file dirname [info script]] server.tcl]
+
+loadTestedCommands
+
+test broker-1.0.0 {simple publish qos 0 v4} -setup {
+    client create sub1 4 # -q 2 -F "%q %t %p"
+} -body {
+    mosquitto_pub -V [version 4] -q 0 -t bla/bla -m blabla
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+} -result {0 bla/bla blabla}
+
+test broker-1.0.1 {simple publish qos 0 v5} -constraints MQTTV5 -setup {
+    client create sub1 5 # -q 2 -F "%q %t %p"
+} -body {
+    mosquitto_pub -V [version 5] -q 0 -t bla/bla -m blabla
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+} -result {0 bla/bla blabla}
+
+test broker-1.0.2 {topic alias v5} -constraints MQTTV5 -setup {
+    client create sub1 5
+    mqtt create pub1 -protocol 5
+    pub1 connect
+} -body {
+    pub1 publish -properties {TopicAlias 99} bla/bla blabla
+    sub1 collect
+    pub1 publish -properties {TopicAlias 99} "" blabla
+    sub1 collect
+} -cleanup {
+    pub1 destroy
+    sub1 destroy
+} -result {bla/bla blabla}
+
+test broker-1.1.0 {simple publish qos 1 v4} -setup {
+    client create sub1 4 # -q 2 -F "%q %t %p"
+} -body {
+    mosquitto_pub -V [version 4] -q 1 -t bla/bla -m blabla
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+} -result {1 bla/bla blabla}
+
+test broker-1.1.1 {simple publish qos 1 v5} -constraints MQTTV5 -setup {
+    client create sub1 5 # -q 2 -F "%q %t %p"
+} -body {
+    mosquitto_pub -V [version 5] -q 1 -t bla/bla -m blabla
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+} -result {1 bla/bla blabla}
+
+test broker-1.2.0 {simple publish qos 2 v4} -setup {
+    client create sub1 4 # -q 2 -F "%q %t %p"
+} -body {
+    mosquitto_pub -V [version 4] -q 2 -t bla/bla -m blabla
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+} -result {2 bla/bla blabla}
+
+test broker-1.2.1 {simple publish qos 2 v5} -constraints MQTTV5 -setup {
+    client create sub1 5 # -q 2 -F "%q %t %p"
+} -body {
+    mosquitto_pub -V [version 5] -q 2 -t bla/bla -m blabla
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+} -result {2 bla/bla blabla}
+
+test broker-1.3.0 {simple subscribe qos 0 v4} -setup {
+    client create sub1 4 # -q 0 -F "%q %t %p"
+} -body {
+    mosquitto_pub -V [version 4] -q 1 -t bla/bla -m blabla
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+} -result {0 bla/bla blabla}
+
+test broker-1.3.1 {simple subscribe qos 0 v5} -constraints MQTTV5 -setup {
+    client create sub1 5 # -q 0 -F "%q %t %p"
+} -body {
+    mosquitto_pub -V [version 5] -q 1 -t bla/bla -m blabla
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+} -result {0 bla/bla blabla}
+
+test broker-1.4.0 {simple subscribe qos 1 v4} -setup {
+    client create sub1 4 # -q 1 -F "%q %t %p"
+} -body {
+    mosquitto_pub -V [version 4] -q 2 -t bla/bla -m blabla
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+} -result {1 bla/bla blabla}
+
+test broker-1.4.1 {simple subscribe qos 1 v5} -constraints MQTTV5 -setup {
+    client create sub1 5 # -q 1 -F "%q %t %p"
+} -body {
+    mosquitto_pub -V [version 5] -q 2 -t bla/bla -m blabla
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+} -result {1 bla/bla blabla}
+
+test broker-2.0.0 {will message v4} -setup {
+    client create sub1 4 will/#
+} -body {
+    client create sub2 4 # --will-topic will/direct --will-payload gone
+    sub2 kill KILL
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+} -result {will/direct gone}
+
+test broker-2.0.1 {will message v5} -constraints MQTTV5 -setup {
+    client create sub1 5 will/#
+} -body {
+    client create sub2 5 # --will-topic will/direct --will-payload gone
+    sub2 kill KILL
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+} -result {will/direct gone}
+
+test broker-2.0.2 {will message with delay v5} -constraints MQTTV5 -setup {
+    client create sub1 5 will/#
+} -body {
+    client create sub2 5 # -i persist \
+      -D CONNECT session-expiry-interval 3 -D WILL will-delay-interval 2 \
+      --will-topic will/delay --will-payload gone
+    sub2 kill KILL
+    sub1 collect 1500
+    sub1 collect 1000
+} -cleanup {
+    sub1 destroy
+} -result {will/delay gone}
+
+test broker-2.1.0 {session takeover v4} -body {
+    client create sub1 4 will/#
+    client create sub2 4 # -i takeover --will-topic will/takeover --will-payload gone
+    client create sub3 4 # -i takeover
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+    sub2 destroy
+    sub3 destroy
+} -result {will/takeover gone}
+
+test broker-2.1.1 {will message v5} -constraints MQTTV5 -body {
+    client create sub1 5 will/#
+    client create sub2 5 # -i takeover --will-topic will/takeover --will-payload gone
+    client create sub3 5 # -i takeover
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+    sub2 destroy
+    sub3 destroy
+    sleep 100
+} -result {will/takeover gone}
+
+test broker-3.0.0 {retained message v4} -body {
+    mosquitto_pub -V [version 4] -t bla/bla -m blabla -r
+    sleep 100
+    client create sub1
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+    mosquitto_pub -V [version 4] -t bla/bla -n -r
+} -result {bla/bla blabla}
+
+test broker-3.0.1 {retained message v5} -constraints MQTTV5 -body {
+    mosquitto_pub -V [version 5] -t bla/bla -m blabla -r
+    sleep 100
+    client create sub1 5
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+    mosquitto_pub -V [version 5] -t bla/bla -n -r
+} -result {bla/bla blabla}
+
+test broker-3.1.0 {delete retained message v4} -body {
+    mosquitto_pub -V [version 4] -t bla/bla -m blabla -r
+    sleep 100
+    mosquitto_pub -V [version 4] -t bla/bla -n -r
+    sleep 100
+    client create sub1
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+} -result {timeout}
+
+test broker-3.1.1 {delete retained message v5} -constraints MQTTV5 -body {
+    mosquitto_pub -V [version 5] -t bla/bla -m blabla -r
+    sleep 100
+    mosquitto_pub -V [version 5] -t bla/bla -n -r
+    sleep 100
+    client create sub1 5
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+} -result {timeout}
+
+test broker-4.0.0 {persistent session v4} -body {
+    client create sub1 4 # -i persist -c
+    sub1 destroy
+    sleep 100
+    mosquitto_pub -V [version 4] -q 1 -t bla/bla1 -m blabla
+    mosquitto_pub -V [version 4] -q 1 -t bla/bla1r -m blabla -r
+    mosquitto_pub -V [version 4] -q 0 -t bla/bla0 -m blabla
+    mosquitto_pub -V [version 4] -q 0 -t bla/bla0r -m blabla -r
+    mosquitto_pub -V [version 4] -q 2 -t bla/bla2 -m blabla
+    mosquitto_pub -V [version 4] -q 2 -t bla/bla2r -m blabla -r
+    sleep 100
+    client create sub1 4 none -i persist -c
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+    mosquitto_pub -V [version 4] -t bla/bla0r -n -r
+    mosquitto_pub -V [version 4] -t bla/bla1r -n -r
+    mosquitto_pub -V [version 4] -t bla/bla2r -n -r
+    client create sub1 4 # -i persist
+    sub1 destroy
+} -result "bla/bla1 blabla\nbla/bla1r blabla\nbla/bla2 blabla\nbla/bla2r blabla"
+
+test broker-4.0.1 {persistent session v5} -body {
+    client create sub1 5 # -i persist -c
+    sub1 destroy
+    sleep 100
+    mosquitto_pub -V [version 5] -q 1 -t bla/bla1 -m blabla
+    mosquitto_pub -V [version 5] -q 1 -t bla/bla1r -m blabla -r
+    mosquitto_pub -V [version 5] -q 0 -t bla/bla0 -m blabla
+    mosquitto_pub -V [version 5] -q 0 -t bla/bla0r -m blabla -r
+    mosquitto_pub -V [version 5] -q 2 -t bla/bla2 -m blabla
+    mosquitto_pub -V [version 5] -q 2 -t bla/bla2r -m blabla -r
+    sleep 100
+    client create sub1 5 none -i persist -c
+    sub1 collect
+} -cleanup {
+    sub1 destroy
+    mosquitto_pub -V [version 5] -t bla/bla0r -n -r
+    mosquitto_pub -V [version 5] -t bla/bla1r -n -r
+    mosquitto_pub -V [version 5] -t bla/bla2r -n -r
+    client create sub1 5 # -i persist
+    sub1 destroy
+} -result "bla/bla1 blabla\nbla/bla1r blabla\nbla/bla2 blabla\nbla/bla2r blabla"
+
+test broker-5.0 {valid methods} -body {
+    server help
+} -returnCodes error -result {unknown method "help": must be\
+  clientadd, clientdel, configure, destroy, listen, useradd or userdel}
+
+# cleanup
+kill
+cleanupTests

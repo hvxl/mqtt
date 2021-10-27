@@ -1,0 +1,155 @@
+[comment {-*- tcl -*- doctools manpage}]
+[vset libname broker]
+[vset cmdname broker]
+[manpage_begin [vset libname] n 2.0]
+[copyright {2019, 2021 Schelte Bron}]
+[moddesc   {Tcl MQTT broker extension}]
+[titledesc {Tcl library for MQTT broker functionality}]
+[require Tcl 8.6]
+[require mqtt 3.0]
+[require sqlite3]
+[require [vset libname] 2.0]
+[description]
+
+The [cmd [vset libname]] library is an extension to the [cmd mqtt] class,
+providing the functionality necessary to create an MQTT broker.
+
+[list_begin definitions]
+[call [cmd [vset cmdname]] [method new] \
+  [arg database] [opt "[arg option] [arg value] [arg ...]"]]
+[call [cmd [vset cmdname]] [method create] \
+  [arg name] [arg database] [opt "[arg option] [arg value] [arg ...]"]]
+
+The [cmd [vset cmdname]] [method new] and [cmd [vset cmdname]] [method create]
+commands create an MQTT server instance, either with an auto-generated or a
+user specified name. That instance can subsequently be used to handle MQTT
+client connections.
+[para]
+The [arg database] argument is usually just the name of a disk file in which
+the database is stored. If the name of the database is the special name
+":memory:" then a new database is created in memory. If the name of the
+database is an empty string, then the database is created in an empty file
+that is automatically deleted when the server instance is destroyed.
+[para]
+The [arg option] [arg value] pairs configure some options associated with the
+broker instance. See the section [sectref "Configuration options"] below for a
+full list of options supported and their effects.
+
+[call [cmd [vset cmdname]] [method log] [arg prefix]]
+The [cmd [vset cmdname]] [method log] command configures a command prefix for
+handling log messages.
+Whenever the library has something to report, the log message is appended as
+an extra argument to [arg prefix] and the resulting command is executed.
+[para]
+Example: Print all log messages to standard output:
+[example_begin]
+mqtt log puts
+[example_end]
+[list_end]
+
+[section "The instance command"]
+For each client instance created with the [vset cmdname] command, a new Tcl
+command is created. This command may be used to invoke various mqtt related
+operations.
+[para]
+The valid forms of this command are:
+[list_begin definitions]
+[call [arg cmd] [method configure] \
+  [opt [arg option]] [opt "[arg value] [arg ...]"]]
+Query or modify the configuration options of the instance.  If one or more
+option-value pairs are specified, then the command modifies the given instance
+option(s) to have the given  value(s);  in this case the command returns an
+empty string.  If option is specified with no value, then the command returns
+the current value of the option.  If no option is specified, it returns a list
+of all available options and their values.
+[para]
+See the section [sectref "Configuration options"] below for a full list of
+options supported and their effects.
+
+[call [arg cmd] [method clientadd] [arg clientid]]
+Add the specified client ID to the database. If any client IDs are stored in
+the database, only those clients will be allowed to connect to the broker.
+By default, all client IDs are valid.
+
+[call [arg cmd] [method clientdel] [arg clientid]]
+Remove the specified client ID from the database.
+Trying to remove a non-existent client ID is not considered an error.
+
+[call [arg cmd] [method listen] [opt [arg port]]]
+Start accepting MQTT client connections on the specified TCP port.
+The default port is 1883.
+
+[call [arg cmd] [method useradd] [arg username] [opt [arg password]]]
+Add the specified user to the database. If any users are stored in the
+database, only those users will be allowed to connect to the broker.
+By default, no username is required and if a username is provided when
+connecting, any name is accepted.
+If the [arg password] argument is specified, the user must provide the given
+password when connecting.
+By default, no password is required and if a password is provided when
+connecting, any value is accepted.
+
+[call [arg cmd] [method userdel] [arg username]]
+Remove the specified user from the database.
+Trying to remove a non-existent user is not considered an error.
+
+[list_end]
+
+[section "Configuration options"]
+The following options, supported by the [cmd [vset cmdname]] [method new],
+[cmd [vset cmdname]] [method create], and [arg cmd] [method configure]
+commands, control how the MQTT broker behaves:
+
+[list_begin definitions]
+[def "[option -aliasmax] [arg count]"]
+The maximum number of topic aliases each client is allowed to use (default:
+100).
+[def "[option -keepalive] [arg seconds]"]
+Rate at which to send keepalive messages (default: 60)
+[def "[option -retransmit] [arg milliseconds]"]
+When to retransmit a message if no confirmation has been received
+(default: 5000)
+[def "[option -socketcmd] [arg prefix]"]
+The command prefix to use when creating a socket. This allows the use of
+encrypted connections (default: socket)
+[list_end]
+
+[section "Custom identification and authentication"]
+The library provides very basic support for identification and authentication:
+If any client IDs have been added to the database using the [method clientadd]
+method, only a client matching one of the provisioned IDs is accepted.
+Similarly, if any users have been added, only those users will be allowed to
+connect, if they provide the stored password.
+[para]
+If more sophisticated control is needed, the application can install a custom
+[method authorize] method by overriding the default [method authorize] method,
+or by mixing in a class that provides an [method authorize] method.
+[para]
+Upon a new connection from a client, the [method authorize] method will be
+called with four arguments: The client ID, the username and password, if they
+were provided by the client, and a key-value list of properties.
+The method should generate an exit code indicating whether the connection is
+allowed or that further authentication steps are required. Any value returned
+by the method should be a key-value list of properties.
+[para]
+Example: To only allow clients with a client ID containing the prefix
+"secure-", the following code may be used in the application:
+
+[example_begin]
+package require broker
+ 
+oo::class create brokerauth {
+    method authorize {client username password properties} {
+        if {![lb]string match secure-* $client[rb]} {
+            # 133: Client Identifier not valid
+            return -code 133
+        }
+        # Continue with the standard checks
+        next $client $username $password $properties
+    }
+}
+
+oo::define broker mixin brokerauth
+[example_end]
+
+[manpage_end]

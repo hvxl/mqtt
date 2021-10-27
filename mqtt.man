@@ -1,0 +1,404 @@
+[comment {-*- tcl -*- doctools manpage}]
+[vset libname mqtt]
+[vset cmdname mqtt]
+[manpage_begin [vset libname] n 3.0]
+[copyright {2019, 2021 Schelte Bron}]
+[moddesc   {Tcl MQTT extension}]
+[titledesc {Tcl library for working with the MQTT messaging protocol}]
+[require Tcl 8.6]
+[require [vset libname] 3.0]
+[description]
+
+[list_begin definitions]
+[call [cmd [vset cmdname]] [method new] \
+  [opt "[arg option] [arg value] [arg ...]"]]
+[call [cmd [vset cmdname]] [method create] [arg name] \
+  [opt "[arg option] [arg value] [arg ...]"]]
+
+The [cmd [vset cmdname]] [method new] and [cmd [vset cmdname]] [method create]
+commands create an MQTT client instance, either with an auto-generated or a
+user specified name. That instance can subsequently be used to communicate
+with an MQTT broker.
+[para]
+The [arg option] [arg value] pairs configure some options associated with the
+client instance. See the section [sectref "Configuration options"] below for a
+full list of options supported and their effects.
+
+[call [cmd [vset cmdname]] [method log] [arg prefix]]
+The [cmd [vset cmdname]] [method log] command configures a command prefix for
+handling log messages.
+Whenever the library has something to report, the log message is appended as
+an extra argument to [arg prefix] and the resulting command is executed.
+Example: Print all log messages to standard output:
+[example_begin]
+mqtt log puts
+[example_end]
+[list_end]
+
+[section "The client command"]
+For each client instance created with the [vset cmdname] command, a new Tcl
+command is created. This command may be used to invoke various mqtt related
+operations.
+[para]
+The valid forms of this command are:
+[list_begin definitions]
+[call [arg cmd] [method authentication] [arg method] [arg prefix]]
+Set up an enhanced authentication method that can subsequently be used as the
+AuthenticationMethod property for the [method connect] method.
+When the server challenges the connection attempt, the [arg prefix] is executed
+with the challenge data as an additional argument. The resulting command should
+return the response to the challenge. Depending on the authentication method,
+there may be multiple challenge/respond rounds.
+If an empty string is given as the [arg prefix] argument, the enhanced
+authentication method specified by the [arg method] argument is deleted.
+
+[call [arg cmd] [method configure] \
+  [opt [arg option]] [opt "[arg value] [arg ...]"]]
+Query or modify the configuration options of the instance.  If one or more
+option-value pairs are specified, then the command modifies the given instance
+option(s) to have the given  value(s);  in this case the command returns an
+empty string.  If [arg option] is specified with no [arg value], then the
+command returns the current value of the option. If no option is specified,
+it returns a list of all available options and their values.
+[para]
+See the section [sectref "Configuration options"] below for a full list of
+options supported and their effects.
+
+[call [arg cmd] [method connect] [opt "-properties [arg properties]"]\
+  [arg name] [opt [arg host]] [opt [arg port]]]
+Connect to the specified MQTT broker, using [arg name] as the MQTT ClientID.
+If an empty string is specified for [arg name], the broker will assign a
+ClientID.
+The assigned Client ID is reported back via the AssignedClientIdentifier
+key in the [arg properties] argument passed to the callback for the
+$SYS/local/connection topic.
+The default value for host is localhost. The default port is 1883.
+[para]
+The following properties may be passed to a [method connect] call:
+SessionExpiryInterval, ReceiveMaximum, MaximumPacketSize, TopicAliasMaximum,
+RequestResponseInformation, RequestProblemInformation, and UserProperty.
+See the [sectref Properties] section for more information about properties.
+
+[call [arg cmd] [method disconnect] [opt "-properties [arg properties]"]\
+  [opt [arg reason]]]
+Disconnect from the currently connected MQTT broker.
+Usual values for [arg reason] are: 0 (Normal disconnection) and 4 (Disconnect
+with Will Message). Check the MQTT specification for a complete list. The
+default is 0.
+[para]
+The following properties may be passed to a [method disconnect] call:
+SessionExpiryInterval, ReasonString, and UserProperty.
+See the [sectref Properties] section for more information about properties.
+
+[call [arg cmd] [method publish] [opt "-properties [arg properties]"]\
+  [arg topic] [arg message] [opt [arg qos]] [opt [arg retain]]]
+Publish an MQTT message to the broker. Valid values for qos are 0 (at most
+once), 1 (at least once), and 2 (exactly once). Default is 0. Valid values
+for retain are 0 and 1. Default is 1 when a MessageExpiryInterval property
+is specified, and 0 otherwise.
+[para]
+The following properties may be passed to a [method publish] call:
+PayloadFormatIndicator, MessageExpiryInterval, TopicAlias, ResponseTopic,
+CorrelationData, SubscriptionIdentifier, ContentType, and UserProperty.
+See the [sectref Properties] section for more information about properties.
+
+[call [arg cmd] [method reauthenticate] [opt "-properties [arg properties]"]]
+Initiate re-authentication. This can only be used after a connection has
+been established with enhanced authentication. If the authentication method
+specifies that the client sends data first, the AuthenticationData property
+should be provided. The library will populate the AuthenticationMethod
+property with the same value as used in the [method connect] method, if not
+provided.
+[para]
+The following properties may be passed to a [method reauthenticate] call:
+AuthenticationMethod, AuthenticationData, ReasonString, and UserProperty.
+See the [sectref Properties] section for more information about properties.
+
+[call [arg cmd] [method subscribe] [opt "-properties [arg properties]"]\
+  [arg pattern] [arg prefix] [opt [arg qos]] [opt [arg nl]]\
+  [opt [arg rap]] [opt [arg rh]]]
+Subscribe to topics matching the specified pattern.
+For both retained and new messages matching the pattern, the [arg prefix] is
+invoked. See the [sectref Callback] section for details.
+[para]
+The [arg qos] argument specifies the maximum quality of service level the
+broker may use for publishing messages to the client. The broker forwards
+messages with a QoS level that is the lower of the QoS of the originally
+published message and the maximum QoS granted by the server.
+In addition to the regular QoS values, 0 (at most once), 1 (at least once),
+and 2 (exactly once), a value of -1 may be specified to reinstall a callback
+without sending a SUBSCRIBE message to the broker.
+This may be useful to change the callback handler and for resumed sessions
+(i.e. when the [option -clean] option is set to false). Default is 2.
+[para]
+The [arg nl] argument controls the MQTT "No Local" subscription option. A value
+of 1 indicates to the server that Application Messages must not be forwarded
+to a connection with a ClientID equal to the ClientID of the publishing
+connection.
+[para]
+The [arg rap] argument maps to the MQTT "Retain As Published" subscription
+option. 
+When a new subscription is established, retained messages that match the
+pattern are reported with the retain flag set to 1 (unless disabled by the
+[arg rh] argument, see below).
+When the [arg rap] argument is set to 0 (the default), any messages matching
+the pattern that are subsequently received by the broker are reported with a
+retain flag value of 0. If the [arg rap] argument is 1, the retain flag of
+subsequent messages reflects the retain flag the message was published with.
+[para]
+The [arg rh] argument maps to the MQTT "Retain Handling" subscription option.
+This option controls whether the server will send retained messages when the
+subscription is established.
+The following values are possible:
+[list_begin definitions]
+[def "0 = Always (default)"]
+Send retained messages at the time of the subscribe.
+[def "1 = Only on new subscriptions"]
+Send retained messages at subscribe only if the subscription does not
+currently exist.
+[def "2 = Never"]
+Do not send retained messages at the time of the subscribe.
+[list_end]
+
+The following properties may be passed to a [method subscribe] call:
+SubscriptionIdentifier and UserProperty.
+See the [sectref Properties] section for more information about properties.
+
+[call [arg cmd] [method unsubscribe] [opt "-properties [arg properties]"]\
+  [arg pattern]]
+Remove a subscription for a topic pattern.
+[para]
+The following properties may be passed to a [method unsubscribe] call:
+UserProperty.
+See the [sectref Properties] section for more information about properties.
+
+[call [arg cmd] [method will] [opt "-properties [arg properties]"]\
+  [arg topic] [arg message] [opt [arg qos]] [opt [arg retain]]]
+Include a last will and testament in all future connections to the MQTT
+broker. If [arg topic] is the empty string, no last will and testament will
+be included in future connections to the MQTT broker. Valid values for qos
+are 0 (at most once), 1 (at least once), and 2 (exactly once). Default is 0.
+Valid values for retain are 0 and 1. Default is 1 when a MessageExpiryInterval
+property is specified, and 0 otherwise.
+
+[para]
+The following properties may be passed to a [method will] call:
+WillDelayInterval, PayloadFormatIndicator, MessageExpiryInterval,
+ContentType, ResponseTopic, CorrelationData, and UserProperty.
+See the [sectref Properties] section for more information about properties.
+[list_end]
+
+[section "Configuration options"]
+The following options, supported by the [cmd [vset cmdname]] [method new],
+[cmd [vset cmdname]] [method create], and [arg cmd] [method configure]
+commands, control how the MQTT client behaves:
+
+[list_begin definitions]
+[def "[option -keepalive] [arg seconds]"]
+Rate at which to send keepalive messages (default: 60)
+[def "[option -retransmit] [arg milliseconds]"]
+When to retransmit a message if no confirmation has been received
+(default: 5000)
+[def "[option -username] [arg value]"]
+The username to use to authenticate with the MQTT broker
+[def "[option -password] [arg value]"]
+The password to use to authenticate with the MQTT broker
+[def "[option -clean] [arg boolean]"]
+Whether to use a clean connection to the MQTT broker (default: on)
+[def "[option -protocol] [arg version]"]
+Which protocol version to use for the connection to the MQTT broker. Valid
+values are 3 (for MQTT version 3.1), 4 (for MQTT version 3.1.1), and 5 (for
+MQTT version 5). The default is 5.
+See the [sectref Versions] section for more information.
+[def "[option -socketcmd] [arg prefix]"]
+The command prefix to use when creating a socket. This allows the use of
+encrypted connections (default: socket)
+[list_end]
+
+[section "Callback"]
+When a message is published to a subscribed topic, a number of arguments is
+appended to the command prefix so that the actual command is as follows:
+[example_begin]
+[cmd commandPrefix] [arg topic] [arg message] [arg retain] [opt [arg properties]]
+[example_end]
+[arg Topic] contains the topic the message was published to.
+[arg Message] gives the contents of the message.
+The [arg retain] flag provides the retain information for the message. The
+meaning of this flag depends on the value of the [arg rh] argument of the
+[method subscribe] command.
+If the message contains any properties, they are passed to the command in the
+[arg properties]] argument as a key-value list.
+The [arg properties] argument is only added to the callback if there are any
+properties to report.
+Since properties are first defined in the MQTT v5 specification, the callback
+will always only get three arguments when [option -protocol] 3 or 4 is used.
+[para]
+See the [sectref Properties] section for more information about properties.
+
+[section "Properties"]
+Since MQTT v5, almost all messages may contain properties. In the Tcl MQTT
+library, properties are represented as a list of key-value pairs. To include
+properties in a message, several methods take an [option -properties] option.
+Sending properties in PUBACK, PUBREC, PUBREL, and PUBCOMP messages is not
+currently possible with the library.
+A [arg property] argument will also be passed to the callback command if the
+received message contains any properties.
+[para]
+Below is the complete list of properties defined in the MQTT v5 specification.
+Unless otherwise indicated, the same property key may only occur once in a
+properties list.
+[list_begin definitions]
+[def PayloadFormatIndicator]
+Boolean indicating that the payload is UTF-8 Encoded Character Data.
+The library takes care of the conversions between UTF-8 and Tcl's internal
+string representation.
+[def MessageExpiryInterval]
+Lifetime of the message in seconds (32-bit integer).
+[def ContentType]
+String describing the content of the Application Message.
+[def ResponseTopic]
+String to be used as the Topic Name for a response message.
+[def CorrelationData]
+Binary data used by the sender of the Request Message to identify which
+request the Response Message is for when it is received. 
+[def SubscriptionIdentifier]
+Integer representing the identifier of the subscription (1 - 268,435,455).
+This key appears multiple times if the publication is the result of a match
+to more than one subscription. In this case their order is not significant.
+[def SessionExpiryInterval]
+Integer representing the Session Expiry Interval in seconds.
+[def AssignedClientIdentifier]
+String containing the Client Identifier asisgned to the client by the server.
+[def ServerKeepAlive]
+Integer with the Keep Alive time assigned by the Server.
+[def AuthenticationMethod]
+String containing the name of the authentication method used for extended
+authentication.
+[def AuthenticationData]
+Binary Data containing authentication data.
+[def RequestProblemInformation]
+Boolean to indicate whether the server may send Reason String or User
+Properties in the case of failures.
+[def WillDelayInterval]
+Integer specifying the delay in seconds before the server publishes the
+client's Will Message
+[def RequestResponseInformation]
+Boolean to request the Server to return Response Information in the CONNACK.
+[def ResponseInformation]
+String which is used as the basis for creating a Response Topic.
+[def ServerReference]
+String containing a space separated list of other servers for the client to
+use.
+[def ReasonString]
+String representing the reason associated with this response. This property
+may be discarded if necessary to keep the message below the maximum packet
+size specified by the receiver.
+[def ReceiveMaximum]
+Integer specifying a limit for the number of QoS 1 and QoS 2 publications
+that the server is willing to process concurrently for the client.
+[def TopicAliasMaximum]
+Integer indicating the highest value that the server will accept as a Topic
+Alias sent by the client.
+[def TopicAlias]
+Integer value that is used to identify the Topic instead of using the Topic
+Name.
+[def MaximumQoS]
+Byte defining the maximum QoS value the server supports (either 0 or 1)
+[def RetainAvailable]
+Boolean declaring whether the server supports retained messages.
+[def UserProperty]
+Name-value pair used to provide additional information to the remote party.
+The UserProperty key is allowed to appear multiple times to represent multiple
+name-value pairs. The same name is allowed to appear more than once.
+This property may be discarded if necessary to keep the message below the
+maximum packet size specified by the receiver.
+[def MaximumPacketSize]
+Integer representing the maximum packet size the server is willing to accept.
+[def WildcardSubscriptionAvailable]
+Boolean declaring whether the server supports Wildcard Subscriptions.
+[def SubscriptionIdentifierAvailable]
+Boolean declaring whether the server supports Subscription Identifiers.
+[def SharedSubscriptionAvailable]
+Boolean declaring whether the server supports Shared Subscriptions.
+[list_end]
+
+When a message would exceed the Maximum Packet Size specified by the server
+in the CONNACK message, some or all ReasonString and/or UserProperty entries
+may be discarded by the library to reduce the size of the message.
+If the message is still too big, the message cannot be sent and is discarded.
+
+[section "Command results"]
+In general, commands are issued to the library, which will try its best to
+perform the requested action. It does this asynchronously, so a result is not
+yet available when the call into the library returns. In certain cases it may
+be useful for the calling code to be informed of the completion of the task.
+The library leverages its existing callback framework to provide this service.
+A caller may subscribe to several special topics to be notified of different
+events. The content provided by all of these special topics is a dict. The
+keys of the dict depend on the topic. The following topics are currently
+defined:
+
+[list_begin definitions]
+[def {$SYS/local/connection}]
+Reports updates of the connection state. This can be the result of receiving
+a CONNACK, DISCONNECT, or final AUTH message.
+The data dict contains the following information:
+[list_begin definitions]
+[def state]
+The new connection state. Possible values are: connected, and disconnected.
+This item is always present.
+[def session]
+Whether the broker has a session present for the client. This key will only
+exist upon the successful establishment of a connection using protocol level
+4 or later. The value will always be '0' when the [option -clean] option is
+set to '1'.
+[def reason]
+The reason for a disconnection or failed connection. Please check the MQTT 
+specification for possible values.
+[list_end]
+
+[def {$SYS/local/subscription}]
+The result of one or more subscribe or unsubscribe commands. The data
+dictionary contains topics and the result of the subscribe or unsubscribe
+request. In case of an error, the result will be 128 or greater.
+On a successful subscribe, the result is the granted qos values 0, 1, or 2.
+The result is an empty string for successful unsubscribes, or 17 if the
+server reported that no subscription existed.
+
+[def {$SYS/local/publication}]
+Reports when the broker has accepted a PUBLISH message. This notification will
+only happen for publish requests with a qos value of 1 or 2, as the broker
+does not acknowledge the receipt of a PUBLISH message with a qos value of 0.
+The data dict contains the published topic, data, and a result code.
+[list_end]
+
+[section Versions]
+The [vset libname] library supports three versions of the MQTT protocol. The
+MQTT specifications number these versions as 3 (v3.1), 4 (v3.1.1), and 5 (v5).
+The [option -protocol] configuration option follows that numbering.
+[para]
+The commands listed above show the options and arguments as valid for version
+5 of the protocol. When using a different protocol version, the following
+limitations exist:
+
+[subsection "Version 4"]
+[list_begin itemized]
+[item]None of the methods accept a [option -properties] option.
+[item]The [method connect] [arg name] argument may only be empty when used
+in combination with a [emph true] value for the [option -clean] option. The
+client is not informed of the assigned name.
+[item]The [method disconnect] method does not take any arguments.
+[item]The [method subscribe] method lacks the [arg nl], [arg rap], and [arg rh]
+arguments.
+[item]The [method authentication] and [method reauthenticate] methods are not
+available.
+[item]The data dict passed to the {$SYS/local/publication} topic does not
+contain a result code.
+[list_end]
+[subsection "Version 3"]
+[list_begin itemized]
+[item]All the limitations of protocol version 4.
+[item]The [method connect] [arg name] argument must have a length between 1-23.
+An empty Client ID is not allowed.
+[list_end]
+[manpage_end]

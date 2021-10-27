@@ -1,0 +1,272 @@
+package require tcltest 2
+namespace import -force tcltest::*
+
+#set capture 1
+loadFile [file join [file dirname [info script]] client.tcl]
+
+loadTestedCommands
+
+test connect-1.0 {anonymous connect to broker v3.1} -body {
+    mqtt create mq -protocol 3
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq connect tcltest
+    varwait done 1000
+    mq disconnect
+    dict getdef $done data state ""
+} -cleanup {
+    mq destroy
+} -result {connected}
+
+test connect-1.0.0 {anonymous connect to broker v3.1.1} -body {
+    mqtt create mq -protocol 4
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq connect tcltest
+    join [dict getdef [varwait done 1000] data ""]
+} -cleanup {
+    mq destroy
+} -result {state connected session 0}
+
+test connect-1.0.1 {anonymous connect to broker v5} -constraints MQTTV5 -body {
+    mqtt create mq -protocol 5
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq connect tcltest
+    join [dict getdef [varwait done 1000] data ""]
+} -cleanup {
+    mq destroy
+} -result {state connected session 0}
+
+test connect-1.1.0 {disconnect} -body {
+    mqtt create mq -protocol 4
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq connect tcltest
+    varwait done 1000
+    mq disconnect
+    join [dict getdef $done data ""]
+} -cleanup {
+    mq destroy
+} -result {state connected session 0}
+
+test connect-1.1.1 {disconnect v5} -constraints MQTTV5 -body {
+    mqtt create mq -protocol 5
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq connect tcltest
+    varwait done 1000
+    mq disconnect -properties {ReasonString "End of test"} 152
+    join [dict getdef $done data ""]
+} -cleanup {
+    mq destroy
+} -result {state connected session 0}
+
+test connect-1.2.0 {connect to broker missing username/password} -body {
+    mqtt create mq -protocol 4
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq connect tcltest localhost 2883
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {state disconnected reason 5 text {not authorized}}
+
+test connect-1.2.1 {connect to broker missing username/password v5} -constraints MQTTV5 -body {
+    mqtt create mq -protocol 5
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq connect tcltest localhost 2883
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {state disconnected reason 135 text {not authorized}}
+
+test connect-1.3.0 {connect to broker with username/password} -body {
+    mqtt create mq -protocol 4 -username tcltest -password pass123
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq connect tcltest localhost 2883
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {state connected session 0}
+
+test connect-1.3.1 {connect to broker with username/password} -constraints MQTTV5 -body {
+    mqtt create mq -protocol 5 -username tcltest -password pass123
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq connect tcltest localhost 2883
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {state connected session 0}
+
+test connect-1.4.0 {assigned client identifier} -body {
+    mqtt create mq -protocol 4
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq connect
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {state connected session 0}
+
+test connect-1.4.1 {assigned client identifier} -constraints MQTTV5 -body {
+    mqtt create mq -protocol 5
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq connect
+    dict getdef [varwait done 1000] properties AssignedClientIdentifier ""
+} -cleanup {
+    mq destroy
+} -match glob -result {auto-*-*-*-*-*}
+
+test connect-1.5 {keep alive negotiation v5} -constraints MQTTV5 -body {
+    mqtt create mq -protocol 5 -keepalive 120
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq connect tcltest
+    varwait done 1000
+    mq configure -keepalive
+} -cleanup {
+    mq destroy
+} -result {60}
+
+test connect-1.6 {get response information v5} -constraints FIX4AE8971 -body {
+    mqtt create mq -protocol 5
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq connect -properties {ReceiveMaximum 50} tcltest
+    varwait done 1000
+    mq disconnect
+    dict getdef $done properties ReceiveMaximum ""
+} -cleanup {
+    mq destroy
+} -result {5}
+
+test connect-2.0.0 {valid methods} -body {
+    mqtt create mq -protocol 4
+    mq help
+} -cleanup {
+    mq destroy
+} -returnCodes error -result {unknown method "help": must be configure,\
+  connect, destroy, disconnect, publish, subscribe, unsubscribe or will}
+
+test connect-2.0.1 {valid methods (v5)} -body {
+    mqtt create mq -protocol 5
+    mq help
+} -cleanup {
+    mq destroy
+} -returnCodes error -result {unknown method "help": must be\
+  authentication, configure, connect, destroy, disconnect, publish,\
+  reauthenticate, subscribe, unsubscribe or will}
+
+test connect-3.0 {connect with duplicate client ID} -constraints MQTTV5 -body {
+    mqtt create mq1 -protocol 5
+    mqtt create mq2 -protocol 4
+    mq1 subscribe {$SYS/local/connection} [list sysmsg done]
+    mq1 connect tcltest
+    varwait done 1000
+    mq2 connect tcltest
+    dict getdef [varwait done 1000] data text ""
+} -cleanup {
+    mq1 destroy
+    mq2 destroy
+} -match constrained -result {
+    FIX9D3F292	exact	{session taken over}
+    default	exact	{server unavailable}
+}
+
+test connect-4.0 {enhanced authentication success} -constraints EXTAUTHS -body {
+    mqtt create mq -protocol 5 -username tcltest -password pass123
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    set prop {AuthenticationMethod single AuthenticationData data}
+    mq connect -properties $prop tcltest localhost 2883
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {state connected session 0}
+
+test connect-4.1 {enhanced authentication not authorized} -constraints EXTAUTHS -body {
+    mqtt create mq -protocol 5 -username tcltest -password pass123
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    set prop {AuthenticationMethod single AuthenticationData greeting}
+    mq connect -properties $prop tcltest localhost 2883
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {state disconnected reason 135 text {not authorized}}
+
+test connect-4.2 {enhanced authentication bad method} -constraints EXTAUTHS -body {
+    mqtt create mq -protocol 5 -username tcltest -password pass123
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    set prop {AuthenticationMethod mystery AuthenticationData greeting}
+    mq connect -properties $prop tcltest localhost 2883
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {state disconnected reason 140 text {bad authentication method}}
+
+test connect-4.3 {enhanced authentication invalid} -constraints EXTAUTHS -body {
+    mqtt create mq -protocol 5 -username tcltest -password pass123
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    set prop {AuthenticationMethod error AuthenticationData greeting}
+    mq connect -properties $prop tcltest localhost 2883
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {state disconnected reason 136 text {server unavailable}}
+
+test connect-5.0 {enhanced authentication challenge} -constraints EXTAUTHM -body {
+    mqtt create mq -protocol 5 -username tcltest -password pass123
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq authentication mirror [list apply [list {method data} {
+	return supercalifragilisticexpialidocious
+    }] mirror]
+    set prop {AuthenticationMethod mirror AuthenticationData greeting}
+    mq connect -properties $prop tcltest localhost 2883
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {state connected session 0}
+
+test connect-5.1 {enhanced authentication challenge failed} -constraints EXTAUTHM -body {
+    mqtt create mq -protocol 5 -username tcltest -password pass123
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq authentication mirror [list apply [list {method data} {
+	return unsupercalifragilisticexpialidocious
+    }] mirror]
+    set prop {AuthenticationMethod mirror AuthenticationData greeting}
+    mq connect -properties $prop tcltest localhost 2883
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {state disconnected reason 135 text {not authorized}}
+
+test connect-5.2 {re-authenticate success} -constraints EXTAUTHM -body {
+    mqtt create mq -protocol 5 -username tcltest -password pass123
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq authentication mirror [list apply [list {method data} {
+	return supercalifragilisticexpialidocious
+    }] mirror]
+    set prop {AuthenticationMethod mirror AuthenticationData greeting}
+    mq connect -properties $prop tcltest localhost 2883
+    varwait done 1000
+    set prop {AuthenticationData refresh}
+    mq reauthenticate -properties $prop
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {state connected}
+
+# Requires mosquitto 2.0.13 (or fix 5cae4d1)
+test connect-5.3 {re-authenticate not authorized} -constraints {EXTAUTHM FIX5CAE4D1} -body {
+    mqtt create mq -protocol 5 -username tcltest -password pass123
+    mq subscribe {$SYS/local/connection} [list sysmsg done]
+    mq authentication mirror [list apply [list {method data} {
+	return supercalifragilisticexpialidocious
+    }] mirror]
+    set prop {AuthenticationMethod mirror AuthenticationData greeting}
+    mq connect -properties $prop tcltest localhost 2883
+    varwait done 1000
+    mq authentication mirror [list apply [list {method data} {
+	return unsupercalifragilisticexpialidocious
+    }] mirror]
+    dict set prop AuthenticationData refresh
+    mq reauthenticate -properties $prop
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {state disconnected reason 135 text {not authorized}}
+
+# cleanup
+kill
+cleanupTests
