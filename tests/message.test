@@ -108,6 +108,28 @@ test message-1.4.1 {unsubscribe before subscribe (v5)} -constraints MQTTV5 -body
     mq destroy
 } -result message
 
+test message-1.5.0 {modify subscription callback (v4)} -body {
+    mqtt create mq -protocol 4
+    mq subscribe {$SYS/local/subscription} [list sysmsg done]
+    mq subscribe tcltest/set/# [list mistake]
+    mq subscribe tcltest/set/# [list message] -1
+    mq connect tcltest
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {tcltest/set/# 2}
+
+test message-1.5.1 {modify subscription callback (v5)} -body {
+    mqtt create mq -protocol 5
+    mq subscribe {$SYS/local/subscription} [list sysmsg done]
+    mq subscribe tcltest/set/# [list mistake]
+    mq subscribe tcltest/set/# [list message] -1
+    mq connect tcltest
+    dict getdef [varwait done 1000] data ""
+} -cleanup {
+    mq destroy
+} -result {tcltest/set/# 2}
+
 test message-2.0 {in-flight messages qos 1 (v5)} -constraints FIX4AE8971 -setup {
     echoclient
 } -body {

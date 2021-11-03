@@ -1472,8 +1472,10 @@ oo::class create mqtt {
 	    dict for {pat dict} $subscriptions {
 		set opts [dict get $dict opts]
 		if {$opts ne "" && ![string match $statustopic/* $pat]} {
-		    dict set delta $pat $dict
-		    dict set subscriptions $pat ack {}
+		    if {$opts >= 0} {
+			dict set delta $pat $dict
+			dict set subscriptions $pat ack {}
+		    }
 		}
 	    }
 	}
@@ -1571,13 +1573,19 @@ oo::class create mqtt {
 	    dict set subscriptions $pattern {
 		ack "" callback {} properties {} opts 0
 	    }
+	    if {$qos < 0} {
+		dict set subscriptions $pattern ack $qos
+		dict set subscriptions $pattern opts -1
+	    }
 	}
 	dict with subscriptions $pattern {
 	    set callback $prefix
-	    set opts [expr {$qos | $nl << 2 | $rap << 3 | $rh << 4}]
-	    set properties $prop
-	    dict set msg topics $pattern $opts
-	    my queue SUBSCRIBE $msg
+	    if {$qos >= 0} {
+		set opts [expr {$qos | $nl << 2 | $rap << 3 | $rh << 4}]
+		set properties $prop
+		dict set msg topics $pattern $opts
+		my queue SUBSCRIBE $msg
+	    }
 	}
 	return
     }
