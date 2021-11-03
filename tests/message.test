@@ -119,7 +119,7 @@ test message-1.5.0 {modify subscription callback (v4)} -body {
     mq destroy
 } -result {tcltest/set/# 2}
 
-test message-1.5.1 {modify subscription callback (v5)} -body {
+test message-1.5.1 {modify subscription callback (v5)} -constraints MQTTV5 -body {
     mqtt create mq -protocol 5
     mq subscribe {$SYS/local/subscription} [list sysmsg done]
     mq subscribe tcltest/set/# [list mistake]
