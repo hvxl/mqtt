@@ -309,7 +309,6 @@ oo::class create mqtt {
 		if {$dir eq "received"} {
 		    set sock [namespace tail [info coroutine]]
 		    set ip [lindex [fconfigure $sock -peer] 0]
-		    set client [dict get $dict client]
 		    set str "New client connected from $ip as $client"
 		}
 		lappend arglist p[dict get $dict version]

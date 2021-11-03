@@ -159,7 +159,7 @@ currently exist.
 [def "2 = Never"]
 Do not send retained messages at the time of the subscribe.
 [list_end]
-
+[para]
 The following properties may be passed to a [method subscribe] call:
 SubscriptionIdentifier and UserProperty.
 See the [sectref Properties] section for more information about properties.
@@ -238,10 +238,10 @@ See the [sectref Properties] section for more information about properties.
 [section "Properties"]
 Since MQTT v5, almost all messages may contain properties. In the Tcl MQTT
 library, properties are represented as a list of key-value pairs. To include
-properties in a message, several methods take an [option -properties] option.
+properties in a message, several methods take a [option -properties] option.
 Sending properties in PUBACK, PUBREC, PUBREL, and PUBCOMP messages is not
 currently possible with the library.
-A [arg property] argument will also be passed to the callback command if the
+A [arg properties] argument will also be passed to the callback command if the
 received message contains any properties.
 [para]
 Below is the complete list of properties defined in the MQTT v5 specification.
