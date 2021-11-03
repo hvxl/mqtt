@@ -63,7 +63,7 @@ test message-1.2.1 {send message with assured delivery (v5)} -constraints MQTTV5
 } -result tcltest/publish/something
 
 test message-1.3.0 {subscribe and unsubscribe (v4)} -body {
-    mqtt create mq -protocol 5
+    mqtt create mq -protocol 4
     mq subscribe {$SYS/local/subscription} [list sysmsg done]
     mq subscribe tcltest/set/# [list message]
     mq connect tcltest

@@ -2023,7 +2023,9 @@ oo::class create mqtt-v4 {
     }
 
     # UNSUBACK has no payload (v5: List of reason codes) 
-    method unsuback {} {}
+    method unsuback {} {
+	payload c0 results
+    }
 
     method disconnected {} {
 	# The server should not be sending a DISCONNECT messages
