@@ -130,6 +130,18 @@ test message-1.5.1 {modify subscription callback (v5)} -constraints MQTTV5 -body
     mq destroy
 } -result {tcltest/set/# 2}
 
+test message-1.6.1 {shared subscription (v5)} -constraints MQTTV5 -setup {
+    echoclient
+} -body {
+    mqtt create mq -protocol 5
+    mq subscribe {$share/test/tcltest/set/#} [list message]
+    mq connect tcltest
+    mq publish tcltest/echo/tcltest/set/done data
+    dict getdef [varwait done 1000] topic ""
+} -cleanup {
+    mq destroy
+} -result tcltest/set/done
+
 test message-2.0 {in-flight messages qos 1 (v5)} -constraints FIX4AE8971 -setup {
     echoclient
 } -body {

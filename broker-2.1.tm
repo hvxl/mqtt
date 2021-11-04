@@ -30,13 +30,13 @@ oo::define mqtt-v4 {
 oo::class create broker {
     superclass mqtt
     constructor {db args} {
-	variable workers {} timer {} config
+	variable workers {} timer {} publish {} config
 	sqlite3 [namespace current]::db $db
 	db function fit -deterministic ::mqtt::match
 	db function incr -argcount 1 -deterministic ::mqtt::incrmsgid
 	db transaction {
 	    # The latest version of the database schema
-	    set version 2
+	    set version 3.1
 	    # Get an initial count of tables
 	    set cnt [db onecolumn {select count(*) from sqlite_master}]
 	    # Create a table for configuration settings
@@ -104,6 +104,7 @@ oo::class create broker {
 		  pattern text,
 		  options int,
 		  subid int default 0,
+		  pool text,
 		  primary key (clientid, pattern)
 		);
 		create table if not exists account (
@@ -201,7 +202,17 @@ oo::class create broker {
 		      where f.client = c.client;
 		    drop table filter_old;
 
-		    -- Track that he database structure has been upgraded to
+		    -- Track that the database structure has been upgraded to
+		    -- the new version
+		    replace into config values('version', $current);
+		}
+	    }
+	    if {[package vcompare $current 3.1] < 0} {
+		set current 3.1
+		db eval {
+		    alter table filter add column pool text;
+
+		    -- Track that the database structure has been upgraded to
 		    -- the new version
 		    replace into config values('version', $current);
 		}
@@ -363,10 +374,19 @@ oo::class create broker {
 	} else {
 	    set subid 0
 	}
+	set cnt 0
 	set list {}
 	db transaction {
 	    dict for {pattern options} $topics {
-		set rh [expr {$options >> 4 & 3}]
+		if {[string match {$share/*/*} $pattern]} {
+		    # Shared subscription
+		    set pattern [join [lassign [split $pattern /] - pool] /]
+		    # No Retained Messages are sent on shared subscriptions
+		    set rh 2
+		} else {
+		    unset -nocomplain pool
+		    set rh [expr {$options >> 4 & 3}]
+		}
 		if {$rh == 1} {
 		    # If Retain Handling is set to 1 then if the subscription
 		    # did not already exist, the Server MUST send all retained
@@ -379,8 +399,9 @@ oo::class create broker {
 		    }
 		}
 		db eval {
-		    replace into filter (clientid, pattern, options, subid) \
-		      values($clientid, $pattern, $options, $subid);
+		    replace into filter \
+		      (clientid, pattern, options, subid, pool) \
+		      values($clientid, $pattern, $options, $subid, $pool);
 		}
 		lappend list [expr {$options & 3}]
 		if {$rh == 2} {
@@ -390,12 +411,15 @@ oo::class create broker {
 		    # Send retained messages at the time of the subscribe
 		    dict lappend publish $clientid \
 		      [list $pattern $options $subid]
+		    incr cnt
 		}
 	    }
 	}
-	set cmd [list [namespace which my] retained]
-	after cancel $cmd
-	after idle $cmd
+	if {$cnt} {
+	    set cmd [list [namespace which my] retained]
+	    after cancel $cmd
+	    after idle $cmd
+	}
 	return $list
     }
 
@@ -592,13 +616,27 @@ oo::class create broker {
 	    set msguid [my store $clientid $msg retain]
 	}
 	set send {}
+	set share {}
 	db eval {
-	    select f.options, f.clientid as id, f.subid \
+	    select f.options, f.clientid as id, f.subid, \
+	      f.pool, (f.pool not null) as shared \
 	      from filter as f, session as s \
 	      where (f.options & 0x4 == 0 or f.clientid <> $clientid) \
 	      and f.clientid = s.clientid and fit(f.pattern, $topic)
 	} {
-	    dict lappend send $id [list $options $subid]
+	    if {$shared} {
+		dict update share $pool dict {
+		    dict lappend dict $id [list $options $subid]
+		}
+	    } else {
+		dict lappend send $id [list $options $subid]
+	    }
+	}
+	# Pick a random client from each shared pool
+	dict for {pool data} $share {
+	    set rnd [expr {int(rand() * [dict size $data])}]
+	    set id [lindex [dict keys $data] $rnd]
+	    dict lappend send $id {*}[dict get $data $id]
 	}
 	if {[dict size $send] == 0} {
 	    # No matching subscribers
@@ -666,10 +704,13 @@ oo::class create broker {
 	set now [clock seconds]
 	db transaction {
 	    db eval {
-		update session set expire = $now + interval;
+		update session set expire = $now + interval \
+		  where clientid = $clientid;
 	    }
-	    db eval {select ifnull(interval, 0xffffffff) as keep, msguid, delay \
-	      from session where clientid = $clientid} {
+	    db eval {
+		select ifnull(interval, 0xffffffff) as keep, msguid, delay \
+		  from session where clientid = $clientid
+	    } {
 		if {$keep > 0} {
 		    set ms [expr {$keep * 1000}]
 		    set my [namespace which my]

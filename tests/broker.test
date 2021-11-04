@@ -230,7 +230,7 @@ test broker-4.0.0 {persistent session v4} -body {
     sub1 destroy
 } -result "bla/bla1 blabla\nbla/bla1r blabla\nbla/bla2 blabla\nbla/bla2r blabla"
 
-test broker-4.0.1 {persistent session v5} -body {
+test broker-4.0.1 {persistent session v5} -constraints MQTTV5 -body {
     client create sub1 5 # -i persist -c
     sub1 destroy
     sleep 100
@@ -256,6 +256,20 @@ test broker-5.0 {valid methods} -body {
     server help
 } -returnCodes error -result {unknown method "help": must be\
   clientadd, clientdel, configure, destroy, listen, useradd or userdel}
+
+test broker-6.0 {shared subscriptions} -constraints MQTTV5 -body {
+    client create sub1 5 {$share/foo/#} -v
+    client create sub2 5 {$share/foo/#} -v
+    for {set i 0} {$i < 10} {incr i} {
+	mosquitto_pub -V [version 5] -t bla/bla -m "message $i"
+    }
+    set l1 [llength [split [sub1 collect] \n]]
+    set l2 [llength [split [sub2 collect] \n]]
+    format {sub1: %d, sub2: %d, total: %d} $l1 $l2 [expr {$l1 + $l2}]
+} -cleanup {
+    sub1 destroy
+    sub2 destroy
+} -match glob -result {sub1: [1-9], sub2: [1-9], total: 10}
 
 # cleanup
 kill

@@ -70,10 +70,23 @@ namespace eval mqtt {
 
     # Check for a topic match
     proc match {pattern topic} {
-	if {[string index $topic 0] eq "$"} {
-	    if {[string index $pattern 0] ne "$"} {return 0}
+	set psplit [split $pattern /]
+	if {[lindex $psplit 0] eq {$share}} {set psplit [lrange $psplit 2 end]}
+	set tsplit [split $topic /]
+	if {[llength $tsplit] < [llength $psplit]} {
+	    # A topic will never match a pattern that has more levels
+	    return 0
+	} elseif {[llength $tsplit] > [llength $psplit]} {
+	    # A topic can only have more levels if the pattern ends in #
+	    if {[lindex $psplit end] ne {#}} {return 0}
 	}
-	foreach p [split $pattern /] n [split $topic /] {
+	# The Server MUST NOT match Topic Filters starting with a wildcard
+	# character (# or +) with Topic Names beginning with a $ character
+	# [MQTT-4.7.2-1]
+	if {[string index $topic 0] eq {$}} {
+	    if {[lindex $psplit 0] ne [lindex $tsplit 0]} {return 0}
+	}
+	foreach p $psplit n $tsplit {
 	    if {$p eq "#"} {
 		return 1
 	    } elseif {$p ne $n && $p ne "+"} {
