@@ -258,18 +258,23 @@ test broker-5.0 {valid methods} -body {
   clientadd, clientdel, configure, destroy, listen, useradd or userdel}
 
 test broker-6.0 {shared subscriptions} -constraints MQTTV5 -body {
-    client create sub1 5 {$share/foo/#} -v
-    client create sub2 5 {$share/foo/#} -v
+    # Seed the random number generator to get a fixed sequence
+    expr {srand(1234567)}
+    client create sub1 5 {$share/foo/#} -F %p
+    client create sub2 5 {$share/foo/#} -F %p
+    client create sub3 5 {$share/foo/#} -F %p
     for {set i 0} {$i < 10} {incr i} {
-	mosquitto_pub -V [version 5] -t bla/bla -m "message $i"
+	mosquitto_pub -V [version 5] -t bla/bla -m "$i"
     }
-    set l1 [llength [split [sub1 collect] \n]]
-    set l2 [llength [split [sub2 collect] \n]]
-    format {sub1: %d, sub2: %d, total: %d} $l1 $l2 [expr {$l1 + $l2}]
+    set l1 [join [split [sub1 collect] \n] ,]
+    set l2 [join [split [sub2 collect] \n] ,]
+    set l3 [join [split [sub3 collect] \n] ,]
+    return $l1/$l2/$l3
 } -cleanup {
     sub1 destroy
     sub2 destroy
-} -match glob -result {sub1: [1-9], sub2: [1-9], total: 10}
+    sub3 destroy
+} -result {2,3,7,9/4,5/0,1,6,8}
 
 # cleanup
 kill
