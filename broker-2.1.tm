@@ -957,7 +957,13 @@ oo::class create mqtt::worker {
 	variable clientid "" fd $sock broker [info coroutine] keepalive 0
 	variable config $opts aliasmax [dict get $opts -aliasmax]
 	oo::objdefine [self] mixin mqtt::helper
-	coroutine $fd my client
+	coroutine $fd apply [list {} {
+	    try {
+		my client
+	    } on error {result info} {
+		log [dict get $info -errorinfo]
+	    }
+	} [namespace current]]
     }
 
     destructor {
