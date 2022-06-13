@@ -73,13 +73,6 @@ namespace eval mqtt {
 	set psplit [split $pattern /]
 	if {[lindex $psplit 0] eq {$share}} {set psplit [lrange $psplit 2 end]}
 	set tsplit [split $topic /]
-	if {[llength $tsplit] < [llength $psplit]} {
-	    # A topic will never match a pattern that has more levels
-	    return 0
-	} elseif {[llength $tsplit] > [llength $psplit]} {
-	    # A topic can only have more levels if the pattern ends in #
-	    if {[lindex $psplit end] ne {#}} {return 0}
-	}
 	# The Server MUST NOT match Topic Filters starting with a wildcard
 	# character (# or +) with Topic Names beginning with a $ character
 	# [MQTT-4.7.2-1]
@@ -1582,7 +1575,7 @@ oo::class create mqtt {
 	    return -code error -errorcode {MQTT FILTER INVALID} \
 	      "invalid topic filter: $pattern"
 	}
-	if {![dict exists $subscriptions $pattern]} {
+	if {![dict exists $subscriptions $pattern ack]} {
 	    dict set subscriptions $pattern {
 		ack "" callback {} properties {} opts 0
 	    }
