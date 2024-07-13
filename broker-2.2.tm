@@ -2,7 +2,7 @@
 # All normative statement references refer to the mqtt-v5.0-os document:
 # https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.pdf
 
-package require mqtt 3
+package require mqtt 3 4
 package require sqlite3
 
 proc mqtt::incrmsgid {num} {
