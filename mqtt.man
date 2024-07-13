@@ -5,7 +5,7 @@
 [copyright {2019 Schelte Bron}]
 [moddesc   {Tcl MQTT extension}]
 [titledesc {Tcl library for working with the MQTT messaging protocol}]
-[require Tcl "9 8.6"]
+[require Tcl "9.0 8.6"]
 [require [vset libname] 4.0]
 [description]
 

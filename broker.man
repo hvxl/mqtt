@@ -1,14 +1,14 @@
 [comment {-*- tcl -*- doctools manpage}]
 [vset libname broker]
 [vset cmdname broker]
-[manpage_begin [vset libname] n 2.0]
+[manpage_begin [vset libname] n 2.2]
 [copyright {2019, 2021 Schelte Bron}]
 [moddesc   {Tcl MQTT broker extension}]
 [titledesc {Tcl library for MQTT broker functionality}]
-[require Tcl "9 8.6"]
-[require mqtt 3.0]
+[require Tcl "9.0 8.6"]
+[require mqtt "4.0 3.0"]
 [require sqlite3]
-[require [vset libname] 2.0]
+[require [vset libname] 2.2]
 [description]
 
 The [cmd [vset libname]] library is an extension to the [cmd mqtt] class,
