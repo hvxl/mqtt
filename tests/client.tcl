@@ -19,7 +19,7 @@ if {[scan $output {mosquitto version %s} mosquitto] == 1} {
     if {[package vsatisfies $mosquitto 2.0.13-]} {testConstraint FIX5CAE4D1 1}
     # Send DISCONNECT With session-takeover return code.
     # https://github.com/eclipse/mosquitto/commit/9d3f292
-    if {[package vsatisfies $mosquitto 2.1-]} {testConstraint FIX9D3F292 1}
+    if {[package vsatisfies $mosquitto 2.0.13-]} {testConstraint FIX9D3F292 1}
 }
 
 cd [testsDirectory]
@@ -82,5 +82,7 @@ proc kill {} {
 	set pid [read $fd]
 	close $fd
 	exec kill $pid
+	# Allow time for the pid file to be removed
+	sleep 100
     }
 }

@@ -944,7 +944,7 @@ oo::class create broker {
 
     unexport authentication authorize backlog cleanup clientid
     unexport compose connect decode delete disconnect distribute errorcode
-    unexport propfilter publish reauthenticate retained session store
+    unexport propfilter publish reauthenticate retained session status store
     unexport subscribe takeover unsubscribe userauth will willmessage
     unexport worker workerconfig yieldproc
 }

@@ -1,12 +1,12 @@
 [comment {-*- tcl -*- doctools manpage}]
 [vset libname mqtt]
 [vset cmdname mqtt]
-[manpage_begin [vset libname] n 3.0]
-[copyright {2019, 2021 Schelte Bron}]
+[manpage_begin [vset libname] n 4.0]
+[copyright {2019 Schelte Bron}]
 [moddesc   {Tcl MQTT extension}]
 [titledesc {Tcl library for working with the MQTT messaging protocol}]
 [require Tcl 8.6]
-[require [vset libname] 3.0]
+[require [vset libname] 4.0]
 [description]
 
 [list_begin definitions]
@@ -113,6 +113,21 @@ provided.
 The following properties may be passed to a [method reauthenticate] call:
 AuthenticationMethod, AuthenticationData, ReasonString, and UserProperty.
 See the [sectref Properties] section for more information about properties.
+
+[call [arg cmd] [method status]]
+Returns information about the connection to the broker. The return value is a
+list, with the first element indicating the basic status:
+[list_begin definitions]
+[def connected]
+The connection to the broker has been established successfully.
+[def disconnected]
+The connection to the broker was terminated normally.
+[def failed]
+Connecting to the broker failed. If a reason for the failure is known, it is
+provided as a second element in the list.
+[def idle]
+A connection to a broker has not yet been initiated.
+[list_end]
 
 [call [arg cmd] [method subscribe] [opt "-properties [arg properties]"]\
   [arg pattern] [arg prefix] [opt [arg qos]] [opt [arg nl]]\
@@ -222,9 +237,9 @@ appended to the command prefix so that the actual command is as follows:
 [cmd commandPrefix] [arg topic] [arg message] [arg retain] [opt [arg properties]]
 [example_end]
 [arg Topic] contains the topic the message was published to.
-[arg Message] gives the contents of the message.
+[arg Message] holds the contents of the message.
 The [arg retain] flag provides the retain information for the message. The
-meaning of this flag depends on the value of the [arg rh] argument of the
+meaning of this flag depends on the value of the [arg rap] argument of the
 [method subscribe] command.
 If the message contains any properties, they are passed to the command in the
 [arg properties]] argument as a key-value list.

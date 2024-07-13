@@ -138,7 +138,8 @@ test connect-2.0.0 {valid methods} -body {
 } -cleanup {
     mq destroy
 } -returnCodes error -result {unknown method "help": must be configure,\
-  connect, destroy, disconnect, publish, subscribe, unsubscribe or will}
+  connect, destroy, disconnect, publish, status, subscribe, unsubscribe\
+  or will}
 
 test connect-2.0.1 {valid methods (v5)} -body {
     mqtt create mq -protocol 5
@@ -147,7 +148,7 @@ test connect-2.0.1 {valid methods (v5)} -body {
     mq destroy
 } -returnCodes error -result {unknown method "help": must be\
   authentication, configure, connect, destroy, disconnect, publish,\
-  reauthenticate, subscribe, unsubscribe or will}
+  reauthenticate, status, subscribe, unsubscribe or will}
 
 test connect-3.0 {connect with duplicate client ID} -constraints MQTTV5 -body {
     mqtt create mq1 -protocol 5
@@ -200,7 +201,7 @@ test connect-4.3 {enhanced authentication invalid} -constraints EXTAUTHS -body {
     mq subscribe {$SYS/local/connection} [list sysmsg done]
     set prop {AuthenticationMethod error AuthenticationData greeting}
     mq connect -properties $prop tcltest localhost 2883
-    dict getdef [varwait done 1000] data ""
+    dict remove [dict getdef [varwait done 1000] data ""] detail
 } -cleanup {
     mq destroy
 } -result {state disconnected reason 136 text {server unavailable}}
