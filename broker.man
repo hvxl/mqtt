@@ -5,7 +5,7 @@
 [copyright {2019, 2021 Schelte Bron}]
 [moddesc   {Tcl MQTT broker extension}]
 [titledesc {Tcl library for MQTT broker functionality}]
-[require Tcl 8.6]
+[require Tcl "9 8.6"]
 [require mqtt 3.0]
 [require sqlite3]
 [require [vset libname] 2.0]
