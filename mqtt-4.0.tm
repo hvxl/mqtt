@@ -3,7 +3,7 @@
 # All normative statement references refer to the mqtt-v5.0-os document:
 # https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.pdf
 
-package require Tcl 8.6
+package require Tcl 8.6 9
 
 namespace eval mqtt {
     variable logpfx list

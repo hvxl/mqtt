@@ -2,7 +2,7 @@ DTPLITE_PROG    = /usr/bin/dtplite
 DTPLITE         = $(DTPLITE_PROG)
 
 srcdir = "$(PWD)"
-PKG_ENV = TCL8_6_TM_PATH="$(srcdir)"
+PKG_ENV = TCL8_6_TM_PATH="$(srcdir)" TCL9_0_TM_PATH="$(srcdir)"
 TCLSH_PROG = /usr/bin/tclsh8.6
 TCLSH = $(PKG_ENV) $(TCLSH_ENV) $(TCLSH_PROG)
 
